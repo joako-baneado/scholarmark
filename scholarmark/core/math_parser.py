@@ -94,9 +94,24 @@ def isolate_equations(text: str) -> str:
             
     return '\n'.join(output)
 
+def sanitize_numeric_typography(text: str) -> str:
+    """Sanitiza fracturas tipográficas de decimales y operadores causadas por itálicas OCR/PDF."""
+    # 1. Fusión de decimales rotos: 5 _._ 77 → 5.77 (con o sin espacios)
+    text = re.sub(r'(\d+)\s*_\s*\.\s*_\s*(\d+)', r'\1.\2', text)
+    # 2. Variante compacta: 5_._77 → 5.77
+    text = re.sub(r'(\d+)_\._\s*(\d+)', r'\1.\2', text)
+    # 3. Punto aislado entre dígitos con itálica: 5 . 77 → 5.77 (solo entre dígitos)
+    text = re.sub(r'(\d+)\s+\.\s+(\d+)', r'\1.\2', text)
+    # 4. Barra de división matemática Unicode → ASCII: ∕ (U+2215), ⁄ (U+2044) → /
+    text = text.replace('\u2215', '/').replace('\u2044', '/')
+    # 5. Signo menos Unicode → ASCII: − (U+2212) → -
+    text = text.replace('\u2212', '-')
+    return text
+
 def parse_math(text: str) -> str:
     """Pipeline completo de transformación matemática."""
-    t = clean_math_glyphs(text)
+    t = sanitize_numeric_typography(text)
+    t = clean_math_glyphs(t)
     t = format_inline_expressions(t)
     t = isolate_equations(t)
     return t

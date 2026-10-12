@@ -14,7 +14,16 @@ from .config import ExtractorConfig
 from .extractor import ScholarExtractor
 from .core.manifest import generate_manifest
 
-console = Console()
+if sys.platform == "win32":
+    try:
+        if hasattr(sys.stdout, "reconfigure"):
+            sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        if hasattr(sys.stderr, "reconfigure"):
+            sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
+console = Console(legacy_windows=False)
 
 BANNER = r"""[bold cyan]
   ____       _           _            __  __            _    
