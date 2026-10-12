@@ -49,9 +49,11 @@ def cli_batch(args):
         
     config = ExtractorConfig(
         extract_images=not args.no_images,
+        extract_vector_graphics=not getattr(args, "no_vectors", False),
         dpi=args.dpi,
         force=args.force,
-        skip_manifest=args.skip_manifest
+        skip_manifest=args.skip_manifest,
+        onnx_model_path=getattr(args, "onnx_model", None)
     )
     
     extractor = ScholarExtractor(config=config)
@@ -136,8 +138,10 @@ def cli_single(args):
         
     config = ExtractorConfig(
         extract_images=not args.no_images,
+        extract_vector_graphics=not getattr(args, "no_vectors", False),
         dpi=args.dpi,
-        force=True
+        force=True,
+        onnx_model_path=getattr(args, "onnx_model", None)
     )
     
     extractor = ScholarExtractor(config=config)
@@ -172,15 +176,19 @@ def main():
     batch_parser.add_argument("--output", "-o", type=str, default="output", help="Output folder for Markdown & figures")
     batch_parser.add_argument("--force", "-f", action="store_true", help="Force reconversion of all files")
     batch_parser.add_argument("--no-images", action="store_true", help="Disable figure and image extraction")
-    batch_parser.add_argument("--dpi", type=int, default=200, help="Image extraction resolution (DPI)")
+    batch_parser.add_argument("--no-vectors", action="store_true", help="Disable vector graphics extraction")
+    batch_parser.add_argument("--dpi", type=int, default=300, help="Image extraction resolution (DPI, default: 300)")
     batch_parser.add_argument("--skip-manifest", action="store_true", help="Skip manifest generation")
+    batch_parser.add_argument("--onnx-model", type=str, default=None, help="Path to custom layout detection ONNX model")
 
     # Command: single
     single_parser = subparsers.add_parser("single", help="Extract a single PDF file")
     single_parser.add_argument("file", type=str, help="Path to PDF file")
     single_parser.add_argument("--output", "-o", type=str, default="output", help="Output folder")
     single_parser.add_argument("--no-images", action="store_true", help="Disable image extraction")
-    single_parser.add_argument("--dpi", type=int, default=200, help="DPI resolution")
+    single_parser.add_argument("--no-vectors", action="store_true", help="Disable vector graphics extraction")
+    single_parser.add_argument("--dpi", type=int, default=300, help="DPI resolution (default: 300)")
+    single_parser.add_argument("--onnx-model", type=str, default=None, help="Path to custom layout detection ONNX model")
 
     # Command: manifest
     manifest_parser = subparsers.add_parser("manifest", help="Generate or update JSON grounding manifest")
