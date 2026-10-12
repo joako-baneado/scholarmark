@@ -34,8 +34,12 @@ When feeding academic papers to LLMs and RAG pipelines, traditional converters (
 ## ✨ Key Features
 
 - 📖 **Strict Multi-Column Reading Flow:** Powered by Graph Neural Network (GNN) layout analysis, guarantees left-to-right, column-by-column semantic coherence.
-- 📐 **LaTeX Equation Synthesis:** Converts Unicode Mathematical Alphanumeric Symbols (`U+1D400`–`U+1D7FF`), Greek letters, and formulas into standardized KaTeX syntax (`$...$` and `$$... \tag{N} $$`).
-- 🖼️ **High-DPI Figure & Diagram Extraction:** Crops vector and raster illustrations at 200–300 DPI, stores them in dedicated asset folders, and links them directly to their captions.
+- 📐 **LaTeX Equation Synthesis & Number Sanitization:** Converts Unicode Mathematical Symbols (`U+1D400`–`U+1D7FF`), repairs fragmented typography (`5 _._ 77` → `5.77`) and outputs standardized KaTeX syntax (`$...$` and `$$... \tag{N} $$`).
+- 🖼️ **Hybrid High-Fidelity Figure Extraction (v2.1):** 
+  - **Vector Fusion:** Merges `page.get_drawings()` vector commands to extract matplotlib/TikZ/PostScript diagrams invisible to basic image streams.
+  - **300+ DPI Crisp Rendering:** Employs affine transformations with `alpha=False` to eliminate antialiasing edge halos.
+  - **Deterministic Caption Matching:** Uses the **Hungarian Algorithm** (`linear_sum_assignment`) with spatial column penalties to bind figures bijectively to their exact captions.
+  - **Subfigure Bounding Protection:** Captures marginal coordinates, subpanel labels `(a)`, `(b)`, and Cartesian axis scales with bleed padding.
 - 📊 **Zero-Phantom Tables:** Filters out spurious empty pipes and outputs clean, aligned GitHub-Flavored Markdown (GFM) tables.
 - 🔤 **Physical Kerning Reconstruction:** Eliminates **99.6%** of word-joining errors by calculating physical glyph bounding box deltas ($\Delta x$).
 - 🗂️ **Automated RAG Grounding Manifest:** Exports `scholarmark_manifest.json` indexing every paper's DOI, title, tables, formulas, and verified numerical facts (%, ms, FPS, GFLOPs).

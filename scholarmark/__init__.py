@@ -2,7 +2,7 @@
 ScholarMark: High-Precision Scientific Paper to Markdown Extractor & RAG Grounding Engine.
 """
 
-__version__ = "2.0.0"
+__version__ = "2.1.0"
 __author__ = "ScholarMark Contributors"
 
 from .extractor import ScholarExtractor

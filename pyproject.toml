@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "scholarmark"
-version = "2.0.0"
+version = "2.1.0"
 description = "High-precision scientific PDF to Markdown converter with LaTeX math, table recovery, figure extraction, and RAG grounding manifest."
 readme = "README.md"
 authors = [
@@ -34,6 +34,11 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+deep = [
+    "onnxruntime>=1.17.0",
+    "scipy>=1.11.0",
+    "pillow>=10.0.0",
+]
 dev = [
     "pytest>=8.0.0",
     "black>=24.0.0",
