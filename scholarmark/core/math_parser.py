@@ -1,7 +1,7 @@
 """
-LaTeX math transformation module for ScholarMark.
+LaTeX math transformation module for ScholarMark v3.0.
 Converts Unicode mathematical alphanumeric symbols, Greek letters, and block equations
-into standardized KaTeX / LaTeX format ($...$ and $$...$$).
+into standardized KaTeX / LaTeX format ($...$ and $$...$$) while avoiding false positives on prose.
 """
 
 import re
@@ -37,15 +37,18 @@ MATH_OPERATORS = {
     '\u2207': r'\nabla', '\u2192': r'\to', '\u21d2': r'\implies', '\u221e': r'\infty',
 }
 
+_STRONG_MATH_OPS = ('=', r'\sum', r'\int', r'\prod', r'\times', r'\to', r'\in', r'\approx', r'\le', r'\ge', r'\ne', r'\partial', r'\nabla', r'\frac')
+_PROSE_WORD_RE = re.compile(r'(?<!\\)\b[a-zA-Z]{4,}\b')
+
+
 def unicode_char_to_latex(char: str) -> str:
     """Convierte un caracter alfanumérico matemático Unicode a LaTeX o carácter base."""
     if char in GREEK_MATH_MAP:
         return GREEK_MATH_MAP[char]
     if char in MATH_OPERATORS:
         return f" {MATH_OPERATORS[char]} "
-    
+
     code = ord(char)
-    # Bloque matemático alfanumérico U+1D400 a U+1D7FF
     if 0x1D400 <= code <= 0x1D7FF:
         try:
             norm = unicodedata.normalize('NFKD', char)
@@ -55,58 +58,89 @@ def unicode_char_to_latex(char: str) -> str:
             pass
     return char
 
+
 def clean_math_glyphs(text: str) -> str:
     """Reemplaza caracteres alfanuméricos matemáticos por caracteres equivalentes estándar."""
     return ''.join(unicode_char_to_latex(c) for c in text)
 
+
 def format_inline_expressions(text: str) -> str:
     """Formatea ángulos, grados y letras griegas en modo matemático en línea ($...$)."""
-    # Grados sexagesimales (ej. 90^\circ)
     text = re.sub(r'(\d+)\s*<\s*sup\s*>.*?(?:circ|\u2218).*?<\s*/sup\s*>', lambda m: f"${m.group(1)}^\\circ$", text)
     text = re.sub(r'(?<!\$)\b(\d+)\s*\^\s*\\circ', lambda m: f"${m.group(1)}^\\circ$", text)
-    
-    # Letras griegas aisladas
+
     for grk in set(GREEK_MATH_MAP.values()):
         escaped = re.escape(grk)
         text = re.sub(rf'_\s*{escaped}\s*_', lambda m, g=grk: f"${g}$", text)
-        
+
     text = re.sub(r'<\s*sup\s*>(.*?)<\s*/sup\s*>', r'^{\1}', text)
     text = re.sub(r'<\s*sub\s*>(.*?)<\s*/sub\s*>', r'_{\1}', text)
     return text
+
+
+def _is_genuine_equation_line(content: str) -> bool:
+    """
+    Evalúa si el texto previo a una etiqueta (n) es realmente una ecuación matemática
+    y no una oración en prosa con un guión (ej. 'state-of-the-art method (1)').
+    """
+    if not content:
+        return False
+
+    has_strong_op = any(op in content for op in _STRONG_MATH_OPS)
+    has_arith_op = any(op in content for op in (' + ', ' - ', '^', '_'))
+
+    if not (has_strong_op or has_arith_op):
+        return False
+
+    # Contar palabras de prosa (>= 4 letras que no están precedidas por backslash LaTeX)
+    prose_words = _PROSE_WORD_RE.findall(content)
+    if len(prose_words) > 6:
+        return False
+
+    # Si no tiene '=' ni operador fuerte (solo '+' o '-'), exigir <= 2 palabras largas
+    if not has_strong_op and len(prose_words) > 2:
+        return False
+
+    return True
+
 
 def isolate_equations(text: str) -> str:
     """Detecta ecuaciones numeradas y las encapsula en bloques $$ ... \\tag{X} $$."""
     lines = text.splitlines()
     output = []
-    
+
     for line in lines:
         stripped = line.strip()
         eq_match = re.search(r'^(.*?)\s*\((\d+[a-zA-Z]?)\)\s*$', stripped)
-        has_math = any(op in stripped for op in ['=', r'\sum', r'\int', r'\times', r'\to', r'\in', r'\approx', r'\le', r'\ge', '+', '-'])
-        is_table_or_heading = stripped.startswith('#') or stripped.startswith('|') or stripped.startswith('**')
-        
-        if eq_match and has_math and not is_table_or_heading and len(stripped) < 260:
+        is_table_or_heading = (
+            stripped.startswith('#')
+            or stripped.startswith('|')
+            or stripped.startswith('**')
+            or stripped.startswith('-')
+            or stripped.startswith('* ')
+        )
+
+        if eq_match and not is_table_or_heading and len(stripped) < 260:
             content = eq_match.group(1).strip('_ ')
             tag = eq_match.group(2).strip()
-            output.append(f"\n$$\n{content} \\tag{{{tag}}}\n$$\n")
-        else:
-            output.append(line)
-            
+            if _is_genuine_equation_line(content):
+                output.append(f"\n$$\n{content} \\tag{{{tag}}}\n$$\n")
+                continue
+
+        output.append(line)
+
     return '\n'.join(output)
+
 
 def sanitize_numeric_typography(text: str) -> str:
     """Sanitiza fracturas tipográficas de decimales y operadores causadas por itálicas OCR/PDF."""
-    # 1. Fusión de decimales rotos: 5 _._ 77 → 5.77 (con o sin espacios)
     text = re.sub(r'(\d+)\s*_\s*\.\s*_\s*(\d+)', r'\1.\2', text)
-    # 2. Variante compacta: 5_._77 → 5.77
     text = re.sub(r'(\d+)_\._\s*(\d+)', r'\1.\2', text)
-    # 3. Punto aislado entre dígitos con itálica: 5 . 77 → 5.77 (solo entre dígitos)
     text = re.sub(r'(\d+)\s+\.\s+(\d+)', r'\1.\2', text)
-    # 4. Barra de división matemática Unicode → ASCII: ∕ (U+2215), ⁄ (U+2044) → /
     text = text.replace('\u2215', '/').replace('\u2044', '/')
-    # 5. Signo menos Unicode → ASCII: − (U+2212) → -
     text = text.replace('\u2212', '-')
     return text
+
 
 def parse_math(text: str) -> str:
     """Pipeline completo de transformación matemática."""

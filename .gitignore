@@ -45,3 +45,10 @@ output/
 temp/
 scratch/
 *.log
+.pytest_cache/
+.scholarmark/
+models/
+*.onnx
+bench/results/*.json
+bench/results/overlays/
+
