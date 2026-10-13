@@ -55,6 +55,8 @@ def _build_config_from_args(args, force_default: bool = False) -> ExtractorConfi
         engine=getattr(args, "engine", "auto"),
         device=getattr(args, "device", "auto"),
         export_json=getattr(args, "json", False),
+        export_chunks=getattr(args, "chunks", False),
+        chunk_max_chars=getattr(args, "chunk_max_chars", 1800),
         workers=getattr(args, "workers", 1),
         onnx_model_path=getattr(args, "onnx_model", None),
     )
@@ -85,8 +87,9 @@ def cli_batch(args):
         f"[bold]Active Engine:[/bold] {active_engine.name} ({config.device})\n"
         f"[bold]Figure Extraction:[/bold] {'Enabled (' + str(args.dpi) + ' DPI)' if not args.no_images else 'Disabled'}\n"
         f"[bold]Canonical JSON:[/bold] {'Enabled' if config.export_json else 'Disabled'}\n"
+        f"[bold]RAG Chunks JSONL:[/bold] {'Enabled' if config.export_chunks else 'Disabled'}\n"
         f"[bold]Force Reconversion:[/bold] {args.force}",
-        title="[bold green]ScholarMark v3.0 Configuration[/bold green]",
+        title=f"[bold green]ScholarMark v{__version__} Configuration[/bold green]",
         border_style="green",
     ))
 
@@ -165,6 +168,8 @@ def cli_single(args):
         console.print(f"[bold green]✓ Success![/bold green] Saved to {res.target_md}")
         if res.target_json:
             console.print(f"  Canonical JSON: {res.target_json}")
+        if res.target_chunks:
+            console.print(f"  RAG Chunks JSONL: {res.target_chunks}")
         console.print(
             f"  Engine: {res.engine_used} | Characters: {res.char_count:,} | "
             f"Figures: {res.figure_count} | Time: {res.elapsed_seconds:.2f}s"
@@ -181,6 +186,31 @@ def cli_manifest(args):
     data = generate_manifest(target_dir, out_file)
     console.print("[bold green]✓ Manifest generated successfully![/bold green]")
     console.print(f"  Indexed: {data['total_papers']} papers at {out_file}")
+
+
+def cli_chunk(args):
+    print_banner()
+    import json
+    from .ir.document import DocumentIR
+    from .rag.chunker import export_chunks_jsonl
+
+    target_path = Path(args.target)
+    max_chars = getattr(args, "chunk_max_chars", 1800)
+    json_files = [target_path] if target_path.is_file() else sorted(target_path.glob("*.scholarmark.json"))
+    if not json_files:
+        console.print(f"[yellow]No *.scholarmark.json files found in {target_path}.[/yellow]")
+        return
+
+    total_chunks = 0
+    for jf in json_files:
+        raw = json.loads(jf.read_text(encoding="utf-8"))
+        ir = DocumentIR.from_dict(raw)
+        stem = jf.name.replace(".scholarmark.json", "")
+        out_jsonl = jf.parent / f"{stem}.chunks.jsonl"
+        chunks = export_chunks_jsonl(ir, out_jsonl, max_chars=max_chars)
+        total_chunks += len(chunks)
+        console.print(f"[green]✓[/green] {out_jsonl.name}: {len(chunks)} semantic chunks")
+    console.print(f"[bold green]✓ Exported {total_chunks} total RAG chunks across {len(json_files)} document(s).[/bold green]")
 
 
 def cli_doctor(args):
@@ -231,13 +261,15 @@ def _add_common_extraction_flags(p: argparse.ArgumentParser) -> None:
         help="Hardware execution target for ONNX Runtime (default: auto)",
     )
     p.add_argument("--json", action="store_true", help="Export canonical DocumentIR JSON alongside Markdown")
+    p.add_argument("--chunks", action="store_true", help="Export DocumentIR-aware semantic RAG chunks (*.chunks.jsonl)")
+    p.add_argument("--chunk-max-chars", type=int, default=1800, help="Maximum characters per prose RAG chunk (default: 1800)")
     p.add_argument("--onnx-model", type=str, default=None, help="Path to custom layout/formula ONNX model")
 
 
 def main():
     parser = argparse.ArgumentParser(
         prog="scholarmark",
-        description=f"ScholarMark v{__version__}: High-Precision Scientific Paper to Markdown & Canonical JSON Extractor.",
+        description=f"ScholarMark v{__version__}: High-Precision Scientific Paper to Markdown, Canonical JSON & RAG Chunks Extractor.",
     )
     subparsers = parser.add_subparsers(dest="command", help="Available subcommands")
 
@@ -260,6 +292,11 @@ def main():
     manifest_parser = subparsers.add_parser("manifest", help="Generate or update JSON grounding manifest")
     manifest_parser.add_argument("dir", type=str, help="Directory containing Markdown files")
 
+    # Command: chunk
+    chunk_parser = subparsers.add_parser("chunk", help="Generate *.chunks.jsonl from existing *.scholarmark.json files")
+    chunk_parser.add_argument("target", type=str, help="Path to *.scholarmark.json file or directory")
+    chunk_parser.add_argument("--chunk-max-chars", type=int, default=1800, help="Maximum characters per prose chunk")
+
     # Command: doctor
     doctor_parser = subparsers.add_parser("doctor", help="Inspect ONNX providers, engines, and hardware readiness")
     doctor_parser.add_argument("--device", type=str, default="auto", choices=["auto", "cpu", "dml", "cuda"])
@@ -268,7 +305,7 @@ def main():
         parser.print_help()
         sys.exit(0)
 
-    if sys.argv[1] not in ["batch", "single", "manifest", "doctor", "-h", "--help"]:
+    if sys.argv[1] not in ["batch", "single", "manifest", "chunk", "doctor", "-h", "--help"]:
         sys.argv.insert(1, "batch")
 
     args = parser.parse_args()
@@ -278,6 +315,8 @@ def main():
         cli_single(args)
     elif args.command == "manifest":
         cli_manifest(args)
+    elif args.command == "chunk":
+        cli_chunk(args)
     elif args.command == "doctor":
         cli_doctor(args)
 

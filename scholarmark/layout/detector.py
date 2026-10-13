@@ -509,18 +509,34 @@ class LayoutDetector:
             if any(bb.coverage_by(fb) > 0.75 for fb in figure_boxes) and len(clean_single) < 80:
                 continue
 
-            # 4. Título del artículo en página 1
-            if page_num == 1 and bb.y0 < (page_h * 0.35) and max_sz >= (body_size * 1.32) and len(clean_single) > 12:
+            # 4. Título del artículo en página 1 (excluyendo encabezados numerados o secciones canónicas)
+            if (
+                page_num == 1
+                and bb.y0 < (page_h * 0.35)
+                and max_sz >= (body_size * 1.32)
+                and len(clean_single) > 12
+                and not _HEADING_PREFIX_RE.match(clean_single)
+                and not _CANONICAL_SECTION_RE.match(clean_single)
+            ):
                 regions.append(LayoutRegion(kind="title", bbox=bb, confidence=0.95))
                 continue
 
-            # 5. Notas al pie (footnote) en la parte inferior de la columna/página
+            # 5. Biografías de autores (IEEE Transactions) — evaluar antes de footnote porque usan fuente de 8–8.5pt al final de página
+            has_nearby_portrait = any(
+                abs(p.y0 - bb.y0) < 60.0 and abs(p.x1 - bb.x0) < 45.0
+                for p in portraits
+            )
+            if _BIO_CUE_RE.search(clean_single) or has_nearby_portrait:
+                regions.append(LayoutRegion(kind="author_bio", bbox=bb, confidence=0.90))
+                continue
+
+            # 6. Notas al pie (footnote) en la parte inferior de la columna/página
             is_near_bottom = bb.y0 > (page_h * 0.72) or (footnote_rule_y is not None and bb.y0 >= (footnote_rule_y - 4.0))
             if is_near_bottom and (max_sz <= (body_size * 0.92) or _FOOTNOTE_START_RE.search(clean_single)):
                 regions.append(LayoutRegion(kind="footnote", bbox=bb, confidence=0.90))
                 continue
 
-            # 6. Ecuaciones aisladas (isolate_formula)
+            # 7. Ecuaciones aisladas (isolate_formula)
             is_eq, eq_tag = self._is_math_heavy_block(text, spans)
             if is_eq:
                 regions.append(LayoutRegion(
@@ -531,7 +547,7 @@ class LayoutDetector:
                 ))
                 continue
 
-            # 7. Encabezados de sección / subsección
+            # 8. Encabezados de sección / subsección
             if len(clean_single) < 115 and (
                 _HEADING_PREFIX_RE.match(clean_single)
                 or _CANONICAL_SECTION_RE.match(clean_single)
@@ -539,15 +555,6 @@ class LayoutDetector:
             ):
                 lvl = 3 if re.match(r"^\d+\.\d+", clean_single) else 2
                 regions.append(LayoutRegion(kind="section_header", bbox=bb, heading_level=lvl, confidence=0.92))
-                continue
-
-            # 8. Biografías de autores (IEEE Transactions)
-            has_nearby_portrait = any(
-                abs(p.y0 - bb.y0) < 60.0 and abs(p.x1 - bb.x0) < 45.0
-                for p in portraits
-            )
-            if _BIO_CUE_RE.search(clean_single) or has_nearby_portrait:
-                regions.append(LayoutRegion(kind="author_bio", bbox=bb, confidence=0.90))
                 continue
 
             # 9. Listas con viñetas

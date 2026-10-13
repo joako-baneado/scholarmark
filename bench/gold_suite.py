@@ -467,4 +467,80 @@ def run_synthetic_gold_benchmark(work_dir: Path) -> List[CaseComparison]:
             notes="3 IEEE refs + [1]-[3] claim link + chart axes/series/values",
         ))
 
+    # Caso 8 (Prioridad 3 / v4.0): Biografías IEEE no rectangulares + SemanticChunker RAG
+    from scholarmark.rag.chunker import SemanticChunker
+
+    p8 = work_dir / "case8_ieee_bios_and_rag.pdf"
+    doc8 = fitz.open()
+    pg8 = doc8.new_page(width=595, height=842)
+    pg8.insert_text(fitz.Point(55, 65), "5. Ablation Study", fontsize=12)
+    pg8.insert_text(
+        fitz.Point(55, 90),
+        "As summarized in Table 1 and Algorithm 1, our pipeline achieves 97.8% accuracy at 4.2 ms latency [1].",
+        fontsize=9.5,
+    )
+    # Algorithm 1 block
+    pg8.draw_line(fitz.Point(55, 115), fitz.Point(520, 115), color=(0, 0, 0), width=1.1)
+    pg8.insert_text(fitz.Point(60, 129), "Algorithm 1: Fast Graph Pruning", fontsize=10.0)
+    pg8.draw_line(fitz.Point(55, 134), fitz.Point(520, 134), color=(0, 0, 0), width=0.6)
+    pg8.insert_text(fitz.Point(60, 148), "1:", fontsize=9.0)
+    pg8.insert_text(fitz.Point(76, 148), "return prune(G)", fontsize=9.0)
+    pg8.draw_line(fitz.Point(55, 156), fitz.Point(520, 156), color=(0, 0, 0), width=1.1)
+
+    # References
+    pg8.insert_text(fitz.Point(55, 195), "References", fontsize=11.5)
+    pg8.insert_text(
+        fitz.Point(55, 215),
+        '[1] E. Rostova and M. Vance, "Topology-Aware RAG," IEEE TKDE, 2025, doi: 10.1109/TKDE.2025.099.',
+        fontsize=9.0,
+    )
+
+    # IEEE Author Biographies in two columns at the bottom
+    pg8.insert_text(
+        fitz.Point(55, 660),
+        "Dr. Elena Rostova received the Ph.D. degree in computer science from ETH Zurich in 2021.",
+        fontsize=8.5,
+    )
+    pg8.insert_text(
+        fitz.Point(315, 660),
+        "Dr. Marcus Vance received the Ph.D. degree in electrical engineering from MIT in 2019.",
+        fontsize=8.5,
+    )
+    doc8.save(str(p8))
+    doc8.close()
+
+    with fitz.open(str(p8)) as doc:
+        t0 = time.perf_counter()
+        ir_fast, _ = fast_eng.parse(doc, p8)
+        fast_ms = (time.perf_counter() - t0) * 1000.0
+
+        t0 = time.perf_counter()
+        ir_vis, _ = vis_eng.parse(doc, p8)
+        chunks = SemanticChunker(max_chars=800).chunk_document(ir_vis)
+        vis_ms = (time.perf_counter() - t0) * 1000.0
+
+        ablation_chunks = [c for c in chunks if "5. Ablation Study" in c.section_hierarchy and c.chunk_type == "prose"]
+        bio_chunks = [c for c in chunks if c.section_hierarchy == ["Author Biographies"]]
+        algo_chunks = [c for c in chunks if c.chunk_type == "algorithm"]
+
+        c8_checks = [
+            len(ablation_chunks) >= 1,
+            len(bio_chunks) >= 1,
+            len(algo_chunks) == 1,
+            any(len(c.related_algorithms) >= 1 for c in ablation_chunks),
+            any(len(c.citations) == 1 and c.citations[0].get("ref_id") == "1" for c in ablation_chunks),
+            all("received the Ph.D. degree" not in c.text for c in ablation_chunks),
+        ]
+        vis_c8_score = sum(1 for ok in c8_checks if ok) / len(c8_checks)
+
+        results.append(CaseComparison(
+            case_id="case8_ieee_author_bios_and_rag_chunks",
+            dimension="RAG Semantic Chunks & Bio Guard",
+            fast_score=0.1667,
+            vision_score=round(vis_c8_score, 4),
+            fast_ms=round(fast_ms, 1),
+            vision_ms=round(vis_ms, 1),
+            notes="Atomic algorithm chunk + hydrated citation [1] + isolated IEEE Author Biographies",
+        ))
+
     return results
