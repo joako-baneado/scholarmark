@@ -60,7 +60,7 @@ Tras inspeccionar el comportamiento real de `VisionEngine v3.1`, se identificaro
 
 ## Prioridad 2 (`v3.2`): Inteligencia Semántica para Grounding — Parser Bibliográfico, Grafo de Citas y `Chart-to-Metadata`
 
-**Estado:** `EN EJECUCIÓN (Ajustado tras Gate 1)`
+**Estado:** `COMPLETADA (Commit b85c9de — 42/42 tests pass, Gold Case 7 = 1.0000)`
 
 ### 2.1. Objetivo Arquitectónico
 Transformar ScholarMark de un extractor estructural de páginas a un **motor de anclaje evidencial (Evidence Grounding Engine)** para sistemas RAG científicos y validación APA/IEEE:
@@ -68,31 +68,38 @@ Transformar ScholarMark de un extractor estructural de páginas a un **motor de 
 2. **Grafo Bidireccional de Citas (`CitationLinker`):** Enlazar cada marcador de cita en el texto (`[1]`, `[3]–[6]`, `(Wang et al., 2024)`) con su entrada bibliográfica canónica y con las métricas cuantitativas (`%`, `ms`, `FPS`, `dB`, `GFLOPs`) presentes en la misma oración.
 3. **Extracción Semántica de Gráficos Vectoriales (`Chart-to-Metadata`):** Extraer e indexar los textos nativos contenidos dentro del `bbox` de cada figura (títulos de ejes X/Y, unidades de medida, nombres de series en la leyenda y valores anotados sobre barras/curvas) en `Block.metadata["chart_semantics"]` y en `scholarmark_manifest.json`.
 
-### 2.2. Archivos a Crear o Modificar
+### 2.2. Archivos Creados o Modificados
 | Archivo | Acción | Responsabilidad Técnica |
 | :--- | :--- | :--- |
-| `scholarmark/core/citations.py` | **Crear** | Implementar `BibliographyParser` (formatos IEEE `[N]` y APA autor-año) y `CitationLinker` (expansión de rangos `[2]–[5]`, mapeo oración $\leftrightarrow$ métrica $\leftrightarrow$ `ref_id`). |
-| `scholarmark/recognizers/chart.py` | **Crear** | Implementar `ChartSemanticsExtractor`: clasificación geométrica de spans internos de figuras en `axis_labels`, `legend_series`, `tick_values` y `data_annotations`. |
-| `scholarmark/engines/vision.py` | Modificar | Ejecutar `ChartSemanticsExtractor` sobre cada bloque `figure` y `BibliographyParser` + `CitationLinker` sobre el `DocumentIR` ensamblado. |
-| `scholarmark/render/markdown.py` | Modificar | Incluir metadatos semánticos de gráficos (ejes y series detectadas) como comentario estructurado/nota bajo las figuras vectoriales cuando estén disponibles. |
-| `scholarmark/core/manifest.py` | Modificar | Enriquecer `scholarmark_manifest.json` con `references` (catálogo estructurado), `grounded_claims` (oración + métrica + `ref_ids` + página) y `figures[].chart_semantics`. |
-| `tests/test_priority2_v3_2.py` | **Crear** | Pruebas unitarias de parseo de referencias IEEE/APA, expansión de rangos `[1]–[4]`, anclaje oración-métrica-cita y extracción de ejes/leyendas en gráficos. |
-| `bench/gold_suite.py` | Modificar | Añadir **Caso 7 (`case7_citations_and_chart_semantics`)** con gráfico de barras vectorial etiquetado, citas en texto y sección `References`. |
+| `scholarmark/core/citations.py` | **Creado** | Implementado `BibliographyParser` (formatos IEEE `[N]` y APA autor-año) y `CitationLinker` (expansión de rangos `[1]–[3]`, mapeo oración $\leftrightarrow$ métrica $\leftrightarrow$ `ref_id`). |
+| `scholarmark/recognizers/chart.py` | **Creado** | Implementado `ChartSemanticsExtractor`: clasificación geométrica de spans internos de figuras en `axis_labels`, `legend_series`, `tick_values` y `data_annotations` con exclusión de `subpanel_labels`. |
+| `scholarmark/layout/detector.py` | Modificado | Blindaje de `_detect_table_regions` frente a gráficos vectoriales con líneas de cuadrícula horizontales situados sobre leyendas `Fig. X:`. |
+| `scholarmark/engines/vision.py` | Modificado | Ejecución de `ChartSemanticsExtractor` en Etapa 4 y `CitationLinker` en Etapa 6 sobre `DocumentIR`. |
+| `scholarmark/render/markdown.py` | Modificado | Inclusión de bloque `> *[Chart Metadata — Axes: ... | Series: ... | Values: ...]*` bajo las figuras vectoriales. |
+| `scholarmark/core/manifest.py` | Modificado | Enriquecimiento de `scholarmark_manifest.json` con `references`, `grounded_claims`, `algorithms_count` y `figures[].chart_semantics` (lectura dual `.ir.json` + `.md`). |
+| `tests/test_priority2_v3_2.py` | **Creado** | Pruebas unitarias e integración para `v3.2`. |
+| `bench/gold_suite.py` | Modificado | Añadido **Caso 7 (`case7_citations_and_chart_semantics`)** con score `1.0000` (`VisionEngine`). |
 
 ### 2.3. Criterios de Aceptación (Prioridad 2)
-- [ ] `DocumentIR.meta["bibliography"]` y `scholarmark_manifest.json` contienen la lista estructurada de referencias con `ref_id`, `authors`, `year`, `title` y `doi`.
-- [ ] Las citas en rango (ej. `[1]–[3]` o `[1, 4]`) se resuelven a sus identificadores individuales (`["1", "2", "3"]`) y quedan vinculadas al bloque y a las métricas de la oración.
-- [ ] Las figuras con texto vectorial interno exponen `chart_semantics` (`axis_labels`, `legend_series`, `numeric_ticks`).
-- [ ] Commit atómico: `feat(v3.2): implement bibliography parser, bidirectional citation graph, and chart semantics extractor`.
+- [x] `DocumentIR.meta["bibliography"]` y `scholarmark_manifest.json` contienen la lista estructurada de referencias con `ref_id`, `authors`, `year`, `title` y `doi`.
+- [x] Las citas en rango (`[1]–[3]`, `[2, 4]`) se resuelven a sus identificadores individuales y quedan vinculadas al bloque y a las métricas de la oración (`38.4%`, `120 FPS`).
+- [x] Las figuras con texto vectorial interno exponen `chart_semantics` (`axis_labels`, `legend_series`, `data_annotations`) sin contaminarse con marcadores `(a)`, `(b)`.
+- [x] Commit atómico: `b85c9de`.
 
-### 2.4. Compuerta de Revisión y Ajuste Adaptativo (`Gate 2` $\rightarrow$ Ajustes a Prioridad 3)
-> *[Se completará automáticamente al finalizar la Prioridad 2 con los hallazgos reales y los ajustes aplicados a la Prioridad 3]*
+### 2.4. Compuerta de Revisión y Ajuste Adaptativo (`Gate 2` $\rightarrow$ Ajustes Aplicados a Prioridad 3)
+Tras evaluar los artefactos producidos por `v3.2`, se incorporan **3 ajustes técnicos específicos** a la **Prioridad 3 (`v4.0`)**:
+1. **Ajuste A — Reutilización Directa de `ir.meta["bibliography"]` y `b.metadata["citations"]` en `SemanticChunker`:**
+   - Dado que `VisionEngine v3.2` ya anota cada `Block` con `b.metadata["citations"]` y deposita el catálogo en `ir.meta["bibliography"]`, `SemanticChunker` construirá un índice $O(1)$ (`ref_by_id`) para hidratar instantáneamente `chunk.cited_references` con los metadatos completos (`authors`, `year`, `title`, `doi`) de cada cita mencionada en el chunk, además de invocar `expand_citation_markers` como respaldo si el `DocumentIR` proviene de `FastEngine`.
+2. **Ajuste B — Índice Cruzado de 4 Tipos de Artefactos (`Table`, `Figure`, `Algorithm`, `Equation`):**
+   - `SemanticChunker` pre-indexará todos los bloques no textuales del `DocumentIR` por su identificador canónico (`fig:3`, `table:1`/`table:I`, `algo:1`, `eq:1`). Cuando un párrafo dentro de un chunk mencione `"Fig. 3"`, `"Table I"`, `"Algorithm 1"` o `"Eq. (1)"`, `chunk.linked_elements` adjuntará automáticamente el resumen del artefacto (incluyendo `chart_semantics` de la Prioridad 2 para figuras y `algorithm_title` de la Prioridad 1 para algoritmos).
+3. **Ajuste C — Aislamiento Semántico de Biografías de Autores (`author_bio`) y Referencias:**
+   - Los bloques con `b.kind == "author_bio"` se agruparán bajo la ruta de sección dedicada `["Author Biographies"]` (separando cada autor por su encabezado/inicio biográfico `" recibed the B.S./Ph.D. degree..."`) para que jamás se mezclen con chunks de conclusiones o metodología.
 
 ---
 
 ## Prioridad 3 (`v4.0`): Exportación Nativa de Chunks Semánticos para Scientific RAG y Benchmark Multi-Editorial
 
-**Estado:** `PENDIENTE (Sujeto a revisión en Gate 2)`
+**Estado:** `EN EJECUCIÓN (Ajustado tras Gate 2)`
 
 ### 3.1. Objetivo Arquitectónico
 Cerrar el ciclo entre extracción documental y recuperación aumentada por generación (Scientific RAG):
