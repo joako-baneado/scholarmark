@@ -1,8 +1,9 @@
 """
-Specialized 2D Formula, Hierarchical Table, and Algorithm Recognizers for ScholarMark v3.1.
+Specialized 2D Formula, Hierarchical Table, Algorithm, and Chart Semantics Recognizers for ScholarMark v3.2.
 """
 
 from .algorithm import AlgorithmRecognizer, AlgorithmResult, AlgorithmLine, ALGORITHM_HEADER_RE
+from .chart import ChartSemanticsExtractor, ChartSemantics
 from .formula import (
     FormulaRecognizer,
     MathSpanToken,
@@ -17,6 +18,8 @@ __all__ = [
     "AlgorithmResult",
     "AlgorithmLine",
     "ALGORITHM_HEADER_RE",
+    "ChartSemanticsExtractor",
+    "ChartSemantics",
     "FormulaRecognizer",
     "MathSpanToken",
     "validate_katex_syntax",

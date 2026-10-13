@@ -14,6 +14,7 @@ from ..core.caption_matcher import (
     match_figures_to_captions,
     match_tables_to_captions,
 )
+from ..core.citations import CitationLinker
 from ..core.geometry import VisualElement, render_crop_300dpi
 from ..ir.document import DocumentIR, PageIR, Block
 from ..layout import (
@@ -23,19 +24,24 @@ from ..layout import (
     stitch_cross_page_paragraphs,
 )
 from ..models.registry import resolve_ort_providers
-from ..recognizers import FormulaRecognizer, TableRecognizer, AlgorithmRecognizer
+from ..recognizers import (
+    FormulaRecognizer,
+    TableRecognizer,
+    AlgorithmRecognizer,
+    ChartSemanticsExtractor,
+)
 
 
 class VisionEngine(BaseEngine):
     """
-    Motor híbrido v3.1:
+    Motor híbrido v3.2:
     1. Detección de regiones de diseño (LayoutDetector).
     2. Mapeo de spans vectoriales nativos + rescate de huérfanos (SpanMapper).
     3. Reconstrucción algebraica 2D de ecuaciones aisladas + fallback PUA (FormulaRecognizer).
     4. Reconstrucción tabular jerárquica HTML/GFM + fallback ráster (TableRecognizer).
     5. Reconstrucción de algoritmos y pseudocódigo con sangría exacta (AlgorithmRecognizer).
-    6. Asociación de leyendas 1:N (CaptionMatcher) y recorte elástico a 300 DPI.
-    7. Orden de lectura topológico DAG + unión de párrafos entre páginas.
+    6. Asociación de leyendas 1:N (CaptionMatcher), semántica de gráficos (ChartSemanticsExtractor) y recorte 300 DPI.
+    7. Orden de lectura topológico DAG, unión inter-página y grafo bidireccional de citas (CitationLinker).
     """
     name = "vision"
 
@@ -57,7 +63,7 @@ class VisionEngine(BaseEngine):
 
     def available(self) -> Tuple[bool, str]:
         _, label = resolve_ort_providers(self.config.device)
-        return True, f"VisionEngine v3.1 ready ({label})"
+        return True, f"VisionEngine v3.2 ready ({label})"
 
     def parse(
         self,
@@ -158,10 +164,19 @@ class VisionEngine(BaseEngine):
                         for ln in algo_res.lines
                     ]
 
-            # Etapa 4: Asociación 1:N de leyendas para figuras y tablas + renderizado 300 DPI
+            # Etapa 4: Asociación 1:N de leyendas para figuras y tablas + semántica de gráficos + renderizado 300 DPI
             fig_blocks = [b for b in blocks if b.kind == "figure"]
             fig_cap_blocks = [b for b in blocks if b.kind == "figure_caption" and b.text.strip()]
             prose_boxes = [b.bbox for b in blocks if b.kind == "text" and len(b.text) > 50]
+
+            for fb in fig_blocks:
+                chart_sem = ChartSemanticsExtractor.extract_from_figure(
+                    page=page,
+                    bbox=fb.bbox,
+                    exclude_subpanels=fb.metadata.get("subpanel_labels", []),
+                )
+                if chart_sem.has_content:
+                    fb.metadata["chart_semantics"] = chart_sem.to_dict()
 
             if fig_blocks and fig_cap_blocks and self.config.caption_matching:
                 vis_figs = [
@@ -252,6 +267,10 @@ class VisionEngine(BaseEngine):
             reading_order=global_order,
             markdown_override=None,
         )
+
+        # Etapa 6 (v3.2): Parser estructural de bibliografía y grafo bidireccional de citas
+        CitationLinker.link_document_ir(ir)
+
         stats = {
             "vector_figures": vector_fig_count,
             "caption_map": caption_map,

@@ -99,13 +99,29 @@ def render_markdown(ir: DocumentIR, config: ExtractorConfig, paper_stem: str, pd
 
         elif b.kind == "figure":
             cap = (b.caption_text or b.text or f"Figure p.{b.page}").strip()
+            chart_sem = b.metadata.get("chart_semantics") or {}
+            chart_note = ""
+            if chart_sem:
+                sem_parts = []
+                if chart_sem.get("axis_labels"):
+                    sem_parts.append(f"Axes: {', '.join(chart_sem['axis_labels'][:4])}")
+                if chart_sem.get("legend_series"):
+                    sem_parts.append(f"Series: {', '.join(chart_sem['legend_series'][:6])}")
+                if chart_sem.get("data_annotations"):
+                    sem_parts.append(f"Values: {', '.join(chart_sem['data_annotations'][:8])}")
+                if sem_parts:
+                    chart_note = f"\n\n> *[Chart Metadata — {' | '.join(sem_parts)}]*"
+
             if b.asset:
                 fig_md = f"![{cap}](assets/{slug}/{b.asset})"
                 if b.caption_text:
                     fig_md += f"\n\n*{b.caption_text.strip()}*"
+                fig_md += chart_note
                 chunks.append(fig_md)
             elif b.caption_text:
-                chunks.append(f"*{b.caption_text.strip()}*")
+                chunks.append(f"*{b.caption_text.strip()}*{chart_note}")
+            elif chart_note:
+                chunks.append(chart_note.strip())
 
         elif b.kind in ("figure_caption", "table_caption"):
             if b.text.strip():

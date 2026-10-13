@@ -154,7 +154,8 @@ class LayoutDetector:
         page: fitz.Page,
         rules: List[BoundingBox],
         table_captions: List[BoundingBox],
-        raw_blocks: List[Dict[str, Any]]
+        raw_blocks: List[Dict[str, Any]],
+        figure_captions: Optional[List[BoundingBox]] = None,
     ) -> List[BoundingBox]:
         """
         Detecta regiones de tablas combinando el buscador de tablas de PyMuPDF
@@ -163,13 +164,25 @@ class LayoutDetector:
         table_boxes: List[BoundingBox] = []
         page_w = float(page.rect.width)
         page_h = float(page.rect.height)
+        fig_caps = figure_captions or []
+
+        def _is_above_figure_caption_without_table_caption(box: BoundingBox) -> bool:
+            near_fig_cap = any(
+                -8.0 <= (fc.y0 - box.y1) <= 50.0 and not (fc.x1 < box.x0 - 25.0 or fc.x0 > box.x1 + 25.0)
+                for fc in fig_caps
+            )
+            near_tab_cap = any(
+                abs(box.y0 - tc.y1) <= 50.0 or abs(tc.y0 - box.y1) <= 50.0
+                for tc in table_captions
+            )
+            return near_fig_cap and not near_tab_cap
 
         # 1. PyMuPDF find_tables nativo si está disponible
         try:
             finder = page.find_tables()
             for tab in getattr(finder, "tables", []):
                 tb = BoundingBox(*tab.bbox)
-                if tb.area >= 1200.0:
+                if tb.area >= 1200.0 and not _is_above_figure_caption_without_table_caption(tb):
                     table_boxes.append(tb)
         except Exception:
             pass
@@ -197,7 +210,10 @@ class LayoutDetector:
                     x1=max(r_top.x1, matched_bottom.x1) + 4.0,
                     y1=matched_bottom.y1 + 2.0,
                 ).pad(0.0, page.rect)
-                if not any(cand_box.iou(existing) > 0.4 for existing in table_boxes):
+                if (
+                    not _is_above_figure_caption_without_table_caption(cand_box)
+                    and not any(cand_box.iou(existing) > 0.4 for existing in table_boxes)
+                ):
                     table_boxes.append(cand_box)
                 i += 1
             else:
@@ -357,8 +373,14 @@ class LayoutDetector:
             else:
                 idx_b += 1
 
-        # Detectar regiones de tablas (excluyendo cajas de algoritmos que usan filetes horizontales)
-        raw_table_boxes = self._detect_table_regions(page, rules, table_caption_boxes, raw_blocks)
+        # Detectar regiones de tablas (excluyendo cajas de algoritmos y gráficos vectoriales con Fig. X:)
+        raw_table_boxes = self._detect_table_regions(
+            page,
+            rules,
+            table_caption_boxes,
+            raw_blocks,
+            figure_captions=figure_caption_boxes,
+        )
         table_boxes = [
             tb for tb in raw_table_boxes
             if not any(tb.iou(ab) > 0.25 or ab.coverage_by(tb) > 0.45 for ab in algorithm_boxes)

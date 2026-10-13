@@ -74,6 +74,9 @@ class TestBenchmarkSuite(unittest.TestCase):
             # Gate 6 (Prioridad 1 / v3.1): Preservación de sangría de algoritmos >= 0.90
             self.assertGreaterEqual(by_id["case6_algorithm_pseudocode"].vision_score, 0.90)
 
+            # Gate 7 (Prioridad 2 / v3.2): Grafo de citas y semántica de gráficos >= 0.90
+            self.assertGreaterEqual(by_id["case7_citations_and_chart_semantics"].vision_score, 0.90)
+
             # Probar generador de overlays visuales sobre case1
             overlays = render_annotated_pages(tmp_path / "case1_reading_order.pdf", tmp_path / "overlays")
             self.assertEqual(len(overlays), 1)
