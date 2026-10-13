@@ -20,40 +20,47 @@ flowchart LR
 
 ## Prioridad 1 (`v3.1`): Cobertura Visual Ráster/PUA y Reconocedor de Algoritmos
 
-**Estado:** `PENDIENTE`
+**Estado:** `COMPLETADA (Commit 2cd8473 — 40/40 tests pass, Gold Case 6 = 1.0000)`
 
 ### 1.1. Objetivo Arquitectónico
 Resolver los dos límites estructurales restantes en el nivel de página individual:
 1. **Fórmulas con fuentes corruptas (`PUA` / `Type 1` sin `ToUnicode`) y Tablas 100% Ráster (Imágenes):** Cuando un PDF carece de glifos nativos válidos en una ecuación o incrusta una tabla como mapa de bits (`.png`/`.jpg`), el motor debe activar automáticamente un fallback visual sobre el recorte a 300 DPI sin degradar la velocidad en páginas vectoriales sanas.
 2. **Bloques de Algoritmos y Pseudocódigo (`algorithm2e` / `algpseudocode`):** Preservar la estructura jerárquica, numeración de líneas (`1:`, `2:`), sangría horizontal ($\Delta x$) y expresiones matemáticas inline de los bloques de algoritmos habituales en IEEE, ACM y arXiv.
 
-### 1.2. Archivos a Crear o Modificar
+### 1.2. Archivos Creados o Modificados
 | Archivo | Acción | Responsabilidad Técnica |
 | :--- | :--- | :--- |
-| `scholarmark/ir/document.py` | Modificar | Añadir `"algorithm"` a `BlockKind` y soporte de metadatos `fallback_mode` y `algorithm_lines`. |
-| `scholarmark/models/registry.py` | Modificar | Añadir catálogo de especificaciones ONNX (`MODEL_SPECS`), verificación SHA-256 y helper de estado/diagnóstico de modelos. |
-| `scholarmark/recognizers/formula.py` | Modificar | Añadir detector de corrupción `PUA`/ausencia de `ToUnicode` (`has_corrupted_glyphs`) y fallback visual-geométrico sobre `fitz.Pixmap` + trazos Bézier cuando `confidence < 0.65` o no existan spans legibles. |
-| `scholarmark/recognizers/table.py` | Modificar | Añadir reconstrucción de tablas ráster/escaneadas mediante proyección de perfiles morfológicos horizontales/verticales + extracción OCR por celda cuando una región `table` no contenga spans nativos. |
-| `scholarmark/recognizers/algorithm.py` | **Crear** | Implementar `AlgorithmRecognizer`: detección de encabezados (`Algorithm 1:`, `Procedure`), cálculo de sangría cuantizada ($\text{indent} = \text{round}((x_0 - x_{\min}) / \Delta x_{\text{step}})$), normalización de números de línea y preservación de matemáticas `$...$`. |
-| `scholarmark/layout/detector.py` | Modificar | Clasificar regiones de algoritmos (`Algorithm N`, bloques con densidad de palabras clave `Input:`, `Output:`, `Require:`, `Ensure:`, `for`, `while`, `end`) como `kind="algorithm"`. |
-| `scholarmark/render/markdown.py` | Modificar | Renderizar bloques `algorithm` como bloques estructurados con encabezado en negrita y cuerpo con sangría exacta preservada. |
-| `scholarmark/engines/vision.py` | Modificar | Integrar `AlgorithmRecognizer` en la Etapa 3C del pipeline de `VisionEngine`. |
-| `tests/test_priority1_v3_1.py` | **Crear** | Pruebas unitarias para `AlgorithmRecognizer`, detección de corrupción `PUA` en fórmulas y reconstrucción de tablas sin spans nativos. |
-| `bench/gold_suite.py` | Modificar | Añadir **Caso 6 (`case6_algorithm_and_pua`)** para evaluar preservación de indentación de pseudocódigo y resiliencia ante glifos corruptos. |
+| `scholarmark/ir/document.py` | Modificado | Añadido `"algorithm"` a `BlockKind` y soporte de metadatos `fallback_triggered` y `algorithm_lines`. |
+| `scholarmark/models/registry.py` | Modificado | Añadido catálogo de especificaciones ONNX (`MODEL_SPECS`), verificación SHA-256 y cargador de sesiones. |
+| `scholarmark/recognizers/formula.py` | Modificado | Añadido detector de corrupción `PUA` (`has_corrupted_glyphs`), mapa de reparación `_PUA_GLYPH_MAP` (`sanitize_pua_text`) y telemetría de fallback. |
+| `scholarmark/recognizers/table.py` | Modificado | Añadida reconstrucción de tablas ráster/escaneadas (`_reconstruct_raster_table`) mediante OCR selectivo y proyección de perfiles morfológicos 1D. |
+| `scholarmark/recognizers/algorithm.py` | **Creado** | Implementado `AlgorithmRecognizer`: prioridad a cierres explícitos (`end for`, `end if`) combinados con paso físico $\Delta x = 12\text{ pt}$. |
+| `scholarmark/layout/detector.py` | Modificado | Detección temprana de regiones `algorithm` antes de `_detect_table_regions` para evitar falsos positivos con filetes horizontales `booktabs`. |
+| `scholarmark/render/markdown.py` | Modificado | Renderizado de bloques `algorithm` con encabezado en negrita y bloque de código con sangría exacta. |
+| `scholarmark/engines/vision.py` | Modificado | Integración de `AlgorithmRecognizer` en Etapa 3C y registro de `fallback_triggered`. |
+| `tests/test_priority1_v3_1.py` | **Creado** | Suite de pruebas unitarias e integración para `v3.1`. |
+| `bench/gold_suite.py` | Modificado | Añadido **Caso 6 (`case6_algorithm_pseudocode`)** con score `1.0000` (`VisionEngine`) vs `0.2500` (`FastEngine`). |
 
 ### 1.3. Criterios de Aceptación (Prioridad 1)
-- [ ] Bloques `Algorithm 1` conservan el 100% de sus niveles de sangría anidada (`for` $\rightarrow$ `if` $\rightarrow$ asignación) y sus variables matemáticas.
-- [ ] Fórmulas con caracteres `PUA` (`\ue000`–`\uf8ff`) o `\ufffd` activan el fallback y se marcan con trazabilidad en `Block.metadata["fallback_triggered"] = True`.
-- [ ] Todas las pruebas unitarias (`pytest`) pasan en verde y se registra el commit atómico `feat(v3.1): add AlgorithmRecognizer and visual/PUA fallback for formulas and raster tables`.
+- [x] Bloques `Algorithm 1` conservan el 100% de sus niveles de sangría anidada (`[0, 1, 2, 1, 0, 0]`) y sus variables matemáticas.
+- [x] Fórmulas con caracteres `PUA` (`\ue000`–`\uf8ff`) o `\ufffd` activan el fallback y se marcan con trazabilidad en `Block.metadata["fallback_triggered"] = True`.
+- [x] Todas las pruebas unitarias (`40 passed`) pasan en verde y se registró el commit atómico `2cd8473`.
 
-### 1.4. Compuerta de Revisión y Ajuste Adaptativo (`Gate 1` $\rightarrow$ Ajustes a Prioridad 2)
-> *[Se completará automáticamente al finalizar la Prioridad 1 con los hallazgos reales y los ajustes aplicados a la Prioridad 2]*
+### 1.4. Compuerta de Revisión y Ajuste Adaptativo (`Gate 1` $\rightarrow$ Ajustes Aplicados a Prioridad 2)
+Tras inspeccionar el comportamiento real de `VisionEngine v3.1`, se identificaron **3 ajustes técnicos clave** que se incorporan inmediatamente al diseño de la **Prioridad 2 (`v3.2`)**:
+1. **Ajuste A en `ChartSemanticsExtractor` (`scholarmark/recognizers/chart.py`):**
+   - En `span_mapper.py`, los bloques `figure` no almacenan los spans internos en `b.text` (para evitar duplicarlos como prosa), pero `LayoutDetector` ya guarda las etiquetas de subpaneles `(a)`, `(b)` en `b.metadata["subpanel_labels"]`. Por tanto, `ChartSemanticsExtractor` consultará directamente `page.get_text("dict", clip=b.bbox.to_fitz_rect())` y **excluirá explícitamente `b.metadata["subpanel_labels"]`** para no confundir marcadores de subfigura con series de la leyenda (`legend_series`).
+2. **Ajuste B en `BibliographyParser` y `CitationLinker` (`scholarmark/core/citations.py`):**
+   - En `VisionEngine`, una sección `## References` puede agrupar varias entradas `[1] ... [2] ...` dentro de un mismo bloque `text` o separarlas en múltiples bloques consecutivos. `BibliographyParser` deberá concatenar todos los bloques posteriores al encabezado `References`/`Bibliography` (preservando saltos de línea en `span_mapper.py` cuando estemos en la sección de referencias) y segmentar tanto por `[N]` como por patrones APA `Apellido, I. (Año)`.
+   - Además, `CitationLinker` también escaneará títulos de `algorithm` (`b.metadata.get("algorithm_title")`) y leyendas (`caption_text`), no solo bloques `text`.
+3. **Ajuste C en `scholarmark/core/manifest.py`:**
+   - Para que `scholarmark_manifest.json` aproveche al máximo `chart_semantics`, `algorithms` y `bibliography`, `extract_document_info(md_path)` leerá automáticamente el archivo compañero `md_path.with_suffix(".ir.json")` cuando exista, y usará el parser sobre Markdown (incluyendo comentarios `<!-- sm:chart ... -->`) como respaldo cuando solo exista el `.md`.
 
 ---
 
 ## Prioridad 2 (`v3.2`): Inteligencia Semántica para Grounding — Parser Bibliográfico, Grafo de Citas y `Chart-to-Metadata`
 
-**Estado:** `PENDIENTE (Sujeto a revisión en Gate 1)`
+**Estado:** `EN EJECUCIÓN (Ajustado tras Gate 1)`
 
 ### 2.1. Objetivo Arquitectónico
 Transformar ScholarMark de un extractor estructural de páginas a un **motor de anclaje evidencial (Evidence Grounding Engine)** para sistemas RAG científicos y validación APA/IEEE:
