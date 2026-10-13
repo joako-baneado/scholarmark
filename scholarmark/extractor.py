@@ -14,6 +14,7 @@ from .config import ExtractorConfig
 from .core.figure_manager import setup_asset_folder, get_figure_count
 from .core.manifest import generate_manifest
 from .engines import get_engine
+from .rag.chunker import export_chunks_jsonl
 from .render import render_markdown, export_canonical_json
 from .utils.cache import DeltaCache
 from .utils.paths import to_extended_path
@@ -32,13 +33,14 @@ class ExtractionResult:
     error_message: Optional[str] = None
     engine_used: str = "fast"
     target_json: Optional[str] = None
+    target_chunks: Optional[str] = None
 
 
 class ScholarExtractor:
     """
-    Motor principal de extracción científica de alta precisión v3.0.
+    Motor principal de extracción científica de alta precisión v4.0.
     Orquesta triaje documental, motores intercambiables (fast, vision, docling),
-    renderizado Markdown/HTML/KaTeX, exportación JSON canónica y manifiestos de grounding RAG.
+    renderizado Markdown/HTML/KaTeX, exportación JSON canónica, chunks JSONL y manifiestos de grounding RAG.
     """
 
     def __init__(self, config: Optional[ExtractorConfig] = None, **kwargs):
@@ -79,7 +81,7 @@ class ScholarExtractor:
         }
 
     def convert_file(self, pdf_path: Path, output_dir: Path) -> ExtractionResult:
-        """Convierte un único archivo PDF a Markdown de alta fidelidad (y opcionalmente JSON canónico)."""
+        """Convierte un único archivo PDF a Markdown de alta fidelidad (y opcionalmente JSON canónico y chunks JSONL)."""
         pdf_path = Path(pdf_path)
         output_dir = Path(output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
@@ -87,6 +89,7 @@ class ScholarExtractor:
         stem = pdf_path.stem
         target_md = output_dir / f"{stem}.md"
         target_json = (output_dir / f"{stem}.scholarmark.json") if self.config.export_json else None
+        target_chunks = (output_dir / f"{stem}.chunks.jsonl") if self.config.export_chunks else None
         start_time = time.time()
 
         asset_dir = None
@@ -120,6 +123,13 @@ class ScholarExtractor:
             if target_json is not None:
                 export_canonical_json(ir, target_json)
 
+            if target_chunks is not None:
+                export_chunks_jsonl(
+                    ir,
+                    target_chunks,
+                    max_chars=self.config.chunk_max_chars,
+                )
+
             elapsed = time.time() - start_time
             fig_count = get_figure_count(asset_dir) if asset_dir else 0
             vector_count = int(stats.get("vector_figures", 0))
@@ -139,6 +149,7 @@ class ScholarExtractor:
                 elapsed_seconds=elapsed,
                 engine_used=engine_used,
                 target_json=str(target_json) if target_json else None,
+                target_chunks=str(target_chunks) if target_chunks else None,
             )
 
         except Exception as e:

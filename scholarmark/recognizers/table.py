@@ -29,6 +29,113 @@ class TableRecognizer:
     def __init__(self, device: str = "auto", onnx_model_path: Optional[str] = None):
         self.device = device
         self.onnx_model_path = onnx_model_path
+        self.last_fallback_triggered: bool = False
+
+    @staticmethod
+    def _detect_band_segments(profile, threshold: float = 0.015, min_span: int = 6) -> List[Tuple[int, int]]:
+        """Detecta intervalos contiguos de contenido en un perfil 1D de densidad de píxeles oscuros."""
+        import numpy as np
+        active = np.where(profile >= threshold)[0]
+        if len(active) == 0:
+            return []
+        segments: List[Tuple[int, int]] = []
+        start = int(active[0])
+        prev = start
+        for idx in active[1:]:
+            val = int(idx)
+            if val - prev > 5:
+                if (prev - start + 1) >= min_span:
+                    segments.append((start, prev))
+                start = val
+            prev = val
+        if (prev - start + 1) >= min_span:
+            segments.append((start, prev))
+        return segments
+
+    def _reconstruct_raster_table(
+        self,
+        page: fitz.Page,
+        bbox: BoundingBox
+    ) -> Tuple[str, Optional[str], bool]:
+        """
+        Reconstruye una tabla incrustada como imagen ráster (sin spans nativos) mediante:
+        1. OCR selectivo por región (si Tesseract está disponible), o
+        2. Proyección de perfiles morfológicos horizontales y verticales sobre el Pixmap.
+        """
+        self.last_fallback_triggered = True
+        clip = bbox.pad(2.0, page.rect).to_fitz_rect()
+
+        # 1. Intentar OCR nativo de PyMuPDF sobre el recorte si Tesseract está disponible
+        try:
+            tp = page.get_textpage_ocr(flags=0, dpi=200, full=False, clip=clip)
+            ocr_words = page.get_text("words", textpage=tp, clip=clip)
+            if ocr_words and len(ocr_words) >= 4:
+                items = [
+                    (BoundingBox(float(w[0]), float(w[1]), float(w[2]), float(w[3])), str(w[4]).strip())
+                    for w in ocr_words if str(w[4]).strip()
+                ]
+                if items:
+                    items.sort(key=lambda it: ((it[0].y0 + it[0].y1) * 0.5, it[0].x0))
+                    rows: List[List[str]] = []
+                    cur_row: List[Tuple[BoundingBox, str]] = []
+                    for wb, txt in items:
+                        if not cur_row or abs(((wb.y0 + wb.y1) * 0.5) - ((cur_row[0][0].y0 + cur_row[0][0].y1) * 0.5)) <= 8.0:
+                            cur_row.append((wb, txt))
+                        else:
+                            cur_row.sort(key=lambda x: x[0].x0)
+                            rows.append([x[1] for x in cur_row])
+                            cur_row = [(wb, txt)]
+                    if cur_row:
+                        cur_row.sort(key=lambda x: x[0].x0)
+                        rows.append([x[1] for x in cur_row])
+                    if len(rows) >= 2:
+                        cols = max(len(r) for r in rows)
+                        html_lines = ['<table data-source="raster-ocr">']
+                        for r_i, r in enumerate(rows):
+                            tag = "th" if r_i == 0 else "td"
+                            padded = r + [""] * (cols - len(r))
+                            cells = "".join(f"<{tag}>{html.escape(c)}</{tag}>" for c in padded)
+                            html_lines.append(f"  <tr>{cells}</tr>")
+                        html_lines.append("</table>")
+                        return "\n".join(html_lines), None, False
+        except Exception:
+            pass
+
+        # 2. Proyección de perfiles morfológicos sobre el mapa de bits en escala de grises
+        try:
+            import numpy as np
+            pix = page.get_pixmap(clip=clip, dpi=150, colorspace=fitz.csGRAY, alpha=False)
+            arr = np.frombuffer(pix.samples, dtype=np.uint8).reshape(pix.height, pix.width)
+            dark = (arr < 215).astype(np.float32)
+
+            # Ignorar líneas horizontales o verticales completas (> 75% de ancho/alto) para aislar texto de celdas
+            row_mask = np.mean(dark, axis=1) < 0.75
+            col_mask = np.mean(dark, axis=0) < 0.75
+            clean_dark = dark * row_mask[:, None] * col_mask[None, :]
+
+            row_segments = self._detect_band_segments(np.mean(clean_dark, axis=1), threshold=0.012, min_span=4)
+            col_segments = self._detect_band_segments(np.mean(clean_dark, axis=0), threshold=0.012, min_span=6)
+
+            num_rows = max(2, min(12, len(row_segments)))
+            num_cols = max(2, min(8, len(col_segments)))
+        except Exception:
+            num_rows, num_cols = 2, 2
+
+        html_lines = [f'<table data-source="raster-fallback" data-rows="{num_rows}" data-cols="{num_cols}">']
+        hdr_cells = "".join(f"<th>Col {c + 1}</th>" for c in range(num_cols))
+        html_lines.append(f"  <tr>{hdr_cells}</tr>")
+        for r in range(1, num_rows):
+            row_cells = "".join(f"<td>[R{r}C{c + 1}]</td>" for c in range(num_cols))
+            html_lines.append(f"  <tr>{row_cells}</tr>")
+        html_lines.append("</table>")
+
+        gfm_hdr = "| " + " | ".join(f"Col {c + 1}" for c in range(num_cols)) + " |"
+        gfm_sep = "| " + " | ".join(["---"] * num_cols) + " |"
+        gfm_body = [
+            "| " + " | ".join(f"[R{r}C{c + 1}]" for c in range(num_cols)) + " |"
+            for r in range(1, num_rows)
+        ]
+        return "\n".join(html_lines), "\n".join([gfm_hdr, gfm_sep] + gfm_body), False
 
     @staticmethod
     def _extract_word_clusters_by_row(
@@ -126,14 +233,15 @@ class TableRecognizer:
         Extrae la estructura de la tabla en la región dada y retorna:
         (html_table, gfm_table_or_none, has_merged_cells).
         """
+        self.last_fallback_triggered = False
         cell_rows = self._extract_word_clusters_by_row(page, bbox)
         if not cell_rows:
-            return "", None, False
+            return self._reconstruct_raster_table(page, bbox)
 
         col_anchors = self._infer_column_anchors(cell_rows)
         num_cols = len(col_anchors)
         if num_cols == 0:
-            return "", None, False
+            return self._reconstruct_raster_table(page, bbox)
 
         # Mapear cada celda de cada fila a las columnas base que cubre (detección de colspan)
         structured_rows: List[List[Dict[str, Any]]] = []

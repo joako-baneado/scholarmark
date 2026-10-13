@@ -28,6 +28,88 @@ _UNICODE_BIG_OP_MAP = {
     "√": r"\sqrt",
 }
 
+# Mapeo de puntos de código PUA (Private Use Area U+E000..U+F8FF) comunes en fuentes TeX Type 1 / Symbol / CMEX
+_PUA_GLYPH_MAP = {
+    "\ue000": r"\sum",
+    "\ue001": r"\prod",
+    "\ue002": r"\int",
+    "\ue003": r"\oint",
+    "\ue004": r"\sqrt",
+    "\ue050": r"\sum",
+    "\ue051": r"\prod",
+    "\ue052": r"\int",
+    "\uf0e5": r"\sum",
+    "\uf0d5": r"\prod",
+    "\uf0f2": r"\int",
+    "\uf0d6": r"\sqrt",
+    "\uf0a5": r"\infty",
+    "\uf0b6": r"\partial",
+    "\uf0d1": r"\nabla",
+    "\uf0ce": r"\in",
+    "\uf0a3": r"\leq",
+    "\uf0b3": r"\geq",
+    "\uf0bb": r"\approx",
+    "\uf0b9": r"\neq",
+    "\uf0b4": r"\times",
+    "\uf0b1": r"\pm",
+    "\uf061": r"\alpha",
+    "\uf062": r"\beta",
+    "\uf067": r"\gamma",
+    "\uf064": r"\delta",
+    "\uf06c": r"\lambda",
+    "\uf06d": r"\mu",
+    "\uf073": r"\sigma",
+    "\uf071": r"\theta",
+    "\uf077": r"\omega",
+}
+
+
+def has_corrupted_glyphs(text: str) -> Tuple[bool, int]:
+    """
+    Detecta si una cadena contiene caracteres en el Área de Uso Privado (PUA U+E000..U+F8FF),
+    el carácter de reemplazo Unicode (U+FFFD) o códigos de control inválidos de fuentes sin ToUnicode.
+    """
+    if not text:
+        return False, 0
+    count = 0
+    for ch in text:
+        code = ord(ch)
+        if (
+            0xE000 <= code <= 0xF8FF
+            or code == 0xFFFD
+            or code >= 0xF0000
+            or (1 <= code < 32 and ch not in ("\t", "\n", "\r"))
+        ):
+            count += 1
+    return count > 0, count
+
+
+def sanitize_pua_text(text: str) -> Tuple[str, bool]:
+    """
+    Reemplaza glifos PUA conocidos de fuentes matemáticas antiguas por sus comandos LaTeX
+    y purga glifos corruptos no mapeados. Retorna (texto_limpio, hubo_reparacion).
+    """
+    has_bad, _ = has_corrupted_glyphs(text)
+    if not has_bad:
+        return text, False
+
+    out_chars: List[str] = []
+    for ch in text:
+        if ch in _PUA_GLYPH_MAP:
+            out_chars.append(f" {_PUA_GLYPH_MAP[ch]} ")
+        else:
+            code = ord(ch)
+            if (
+                0xE000 <= code <= 0xF8FF
+                or code == 0xFFFD
+                or code >= 0xF0000
+                or (1 <= code < 32 and ch not in ("\t", "\n", "\r"))
+            ):
+                # Ignorar glifo corrupto sin mapeo para evitar contaminar KaTeX
+                continue
+            out_chars.append(ch)
+    return "".join(out_chars), True
+
 
 @dataclass
 class MathSpanToken:
@@ -53,6 +135,10 @@ def validate_katex_syntax(latex: str) -> Tuple[bool, float]:
     if not latex or not latex.strip():
         return False, 0.0
 
+    has_bad, _ = has_corrupted_glyphs(latex)
+    if has_bad:
+        return False, 0.20
+
     depth = 0
     for ch in latex:
         if ch == "{":
@@ -76,7 +162,8 @@ def validate_katex_syntax(latex: str) -> Tuple[bool, float]:
 
 
 def _normalize_token_latex(raw_text: str) -> str:
-    txt = sanitize_numeric_typography(raw_text.strip())
+    repaired, _ = sanitize_pua_text(raw_text.strip())
+    txt = sanitize_numeric_typography(repaired)
     for u_op, l_op in _UNICODE_BIG_OP_MAP.items():
         txt = txt.replace(u_op, f" {l_op} ")
     txt = clean_math_glyphs(txt)
@@ -87,14 +174,16 @@ class FormulaRecognizer:
     """
     Reconocedor híbrido 2D de ecuaciones científicas.
     Reconstruye fracciones vectoriales, sub/superíndices anidados, operadores con límites
-    y matrices directamente desde el árbol espacial de glifos y trazos del PDF, con soporte
-    opcional para sesiones ONNX visuales.
+    y matrices directamente desde el árbol espacial de glifos y trazos del PDF, con reparación
+    de glifos PUA corruptos y soporte opcional para sesiones ONNX visuales.
     """
 
     def __init__(self, device: str = "auto", onnx_model_path: Optional[str] = None):
         self.device = device
         self.onnx_model_path = onnx_model_path
         self._cache: Dict[str, Tuple[str, float, Optional[str]]] = {}
+        self.last_fallback_triggered: bool = False
+        self.last_corrupted_glyphs: int = 0
 
     @staticmethod
     def _extract_tokens_and_bars(
@@ -346,14 +435,25 @@ class FormulaRecognizer:
         Reconstruye la ecuación en la región dada y retorna (latex, confidence, tag).
         Utiliza caché SHA-1 sobre las coordenadas y texto del bloque.
         """
+        self.last_fallback_triggered = False
+        self.last_corrupted_glyphs = 0
+
         cache_key = hashlib.sha1(
             f"{page.number}:{round(bbox.x0,1)}:{round(bbox.y0,1)}:{round(bbox.x1,1)}:{round(bbox.y1,1)}:{fallback_text}".encode("utf-8")
         ).hexdigest()
+
+        tokens, bars = self._extract_tokens_and_bars(page, bbox, drawings=drawings)
+        raw_concat = " ".join(t.text for t in tokens) + " " + (fallback_text or "")
+        has_bad, bad_count = has_corrupted_glyphs(raw_concat)
+        if has_bad:
+            self.last_fallback_triggered = True
+            self.last_corrupted_glyphs = bad_count
+
         if cache_key in self._cache:
             return self._cache[cache_key]
 
-        tokens, bars = self._extract_tokens_and_bars(page, bbox, drawings=drawings)
         if not tokens:
+            self.last_fallback_triggered = True
             clean_fb = _normalize_token_latex(fallback_text)
             ok, conf = validate_katex_syntax(clean_fb)
             res = (clean_fb, conf if ok else 0.4, None)
@@ -381,6 +481,7 @@ class FormulaRecognizer:
         latex_str = self._reconstruct_sequence(tokens, bars).strip()
         ok, conf = validate_katex_syntax(latex_str)
         if not ok and fallback_text:
+            self.last_fallback_triggered = True
             latex_str = _normalize_token_latex(fallback_text)
             ok, conf = validate_katex_syntax(latex_str)
             conf = min(conf, 0.45)

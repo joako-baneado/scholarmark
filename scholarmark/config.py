@@ -28,6 +28,8 @@ class ExtractorConfig:
     engine: str = "auto"  # "auto" | "fast" | "vision" | "docling"
     device: str = "auto"  # "auto" | "cpu" | "dml" | "cuda"
     export_json: bool = False
+    export_chunks: bool = False
+    chunk_max_chars: int = 1800
     html_complex_tables: bool = True
     extract_vector_graphics: bool = True
     high_fidelity_figures: bool = True

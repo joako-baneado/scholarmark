@@ -113,7 +113,10 @@ def map_spans_to_blocks(
             else:
                 assembled_lines.append(line_str)
 
-        block_text = " ".join(assembled_lines).strip()
+        if reg.kind in ("algorithm", "list"):
+            block_text = "\n".join(assembled_lines).strip()
+        else:
+            block_text = " ".join(assembled_lines).strip()
         blocks.append(Block(
             id=bid,
             kind=reg.kind,

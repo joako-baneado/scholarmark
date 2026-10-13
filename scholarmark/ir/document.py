@@ -23,6 +23,7 @@ BlockKind = Literal[
     "figure_caption",
     "list",
     "author_bio",
+    "algorithm",
 ]
 
 BlockSource = Literal["native", "model", "ocr"]

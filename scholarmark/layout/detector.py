@@ -25,6 +25,7 @@ from ..core.geometry import (
     expand_figure_bbox,
 )
 from ..models.registry import resolve_ort_providers
+from ..recognizers.algorithm import AlgorithmRecognizer, ALGORITHM_HEADER_RE
 
 
 _HEADING_PREFIX_RE = re.compile(
@@ -153,7 +154,8 @@ class LayoutDetector:
         page: fitz.Page,
         rules: List[BoundingBox],
         table_captions: List[BoundingBox],
-        raw_blocks: List[Dict[str, Any]]
+        raw_blocks: List[Dict[str, Any]],
+        figure_captions: Optional[List[BoundingBox]] = None,
     ) -> List[BoundingBox]:
         """
         Detecta regiones de tablas combinando el buscador de tablas de PyMuPDF
@@ -162,13 +164,25 @@ class LayoutDetector:
         table_boxes: List[BoundingBox] = []
         page_w = float(page.rect.width)
         page_h = float(page.rect.height)
+        fig_caps = figure_captions or []
+
+        def _is_above_figure_caption_without_table_caption(box: BoundingBox) -> bool:
+            near_fig_cap = any(
+                -8.0 <= (fc.y0 - box.y1) <= 50.0 and not (fc.x1 < box.x0 - 25.0 or fc.x0 > box.x1 + 25.0)
+                for fc in fig_caps
+            )
+            near_tab_cap = any(
+                abs(box.y0 - tc.y1) <= 50.0 or abs(tc.y0 - box.y1) <= 50.0
+                for tc in table_captions
+            )
+            return near_fig_cap and not near_tab_cap
 
         # 1. PyMuPDF find_tables nativo si está disponible
         try:
             finder = page.find_tables()
             for tab in getattr(finder, "tables", []):
                 tb = BoundingBox(*tab.bbox)
-                if tb.area >= 1200.0:
+                if tb.area >= 1200.0 and not _is_above_figure_caption_without_table_caption(tb):
                     table_boxes.append(tb)
         except Exception:
             pass
@@ -196,7 +210,10 @@ class LayoutDetector:
                     x1=max(r_top.x1, matched_bottom.x1) + 4.0,
                     y1=matched_bottom.y1 + 2.0,
                 ).pad(0.0, page.rect)
-                if not any(cand_box.iou(existing) > 0.4 for existing in table_boxes):
+                if (
+                    not _is_above_figure_caption_without_table_caption(cand_box)
+                    and not any(cand_box.iou(existing) > 0.4 for existing in table_boxes)
+                ):
                     table_boxes.append(cand_box)
                 i += 1
             else:
@@ -231,8 +248,42 @@ class LayoutDetector:
                     u = u.union(ab)
                 if u.height >= 20.0 and u.width <= page_w and u.height <= page_h:
                     table_boxes.append(u)
+            else:
+                # 4. Rescate de tablas ráster (imagen incrustada inmediatamente debajo de Table X:)
+                try:
+                    for img in page.get_images():
+                        xref = img[0]
+                        for r in page.get_image_rects(xref):
+                            ib = BoundingBox.from_fitz_rect(r)
+                            if (
+                                ib.width >= 60.0
+                                and ib.height >= 30.0
+                                and -5.0 <= (ib.y0 - tc.y1) <= 45.0
+                                and not (ib.x1 < tc.x0 - 20.0 or ib.x0 > tc.x1 + 20.0)
+                            ):
+                                table_boxes.append(ib)
+                except Exception:
+                    pass
 
         return table_boxes
+
+    @staticmethod
+    def _is_pseudocode_continuation(text: str) -> bool:
+        """Determina si un bloque corto es una línea o continuación de un algoritmo."""
+        s = " ".join(text.split()).strip()
+        if not s or len(s) > 260:
+            return False
+        if re.match(
+            r"^(?:\[?\d{1,3}\]?[:.)]\s*|Require\s*:|Ensure\s*:|Input\s*:|Output\s*:|"
+            r"for\b|parfor\b|while\b|if\b|else\b|elsif\b|elif\b|repeat\b|until\b|"
+            r"end(?:\s+(?:for|while|if))?\b|return\b)",
+            s,
+            re.IGNORECASE,
+        ):
+            return True
+        if ("<-" in s or "←" in s) and len(s.split()) <= 18:
+            return True
+        return False
 
     def detect_page(
         self,
@@ -291,8 +342,49 @@ class LayoutDetector:
             elif CAPTION_REGEX.search(clean_single):
                 figure_caption_boxes.append(bb)
 
-        # Detectar regiones de tablas
-        table_boxes = self._detect_table_regions(page, rules, table_caption_boxes, raw_blocks)
+        # Detectar bloques de Algoritmos y Pseudocódigo antes de tablas (evita confusión con reglas horizontales)
+        algorithm_boxes: List[BoundingBox] = []
+        consumed_by_algorithm: set[int] = set()
+        idx_b = 0
+        while idx_b < len(prelim_text_blocks):
+            if idx_b in consumed_by_algorithm:
+                idx_b += 1
+                continue
+            bb_cur, txt_cur, _, _ = prelim_text_blocks[idx_b]
+            first_line = txt_cur.splitlines()[0].strip() if txt_cur else ""
+            if ALGORITHM_HEADER_RE.match(first_line) or AlgorithmRecognizer.is_algorithm_text(txt_cur):
+                union_algo = bb_cur
+                consumed_by_algorithm.add(idx_b)
+                j_next = idx_b + 1
+                while j_next < len(prelim_text_blocks):
+                    bb_nxt, txt_nxt, _, _ = prelim_text_blocks[j_next]
+                    v_gap = bb_nxt.y0 - union_algo.y1
+                    horiz_aligned = not (bb_nxt.x1 < union_algo.x0 - 15.0 or bb_nxt.x0 > union_algo.x1 + 140.0)
+                    if -4.0 <= v_gap <= 28.0 and horiz_aligned and self._is_pseudocode_continuation(txt_nxt):
+                        union_algo = union_algo.union(bb_nxt)
+                        consumed_by_algorithm.add(j_next)
+                        j_next += 1
+                    else:
+                        break
+                algo_box = union_algo.pad(2.0, page.rect)
+                algorithm_boxes.append(algo_box)
+                regions.append(LayoutRegion(kind="algorithm", bbox=algo_box, confidence=0.95, source="model"))
+                idx_b = j_next
+            else:
+                idx_b += 1
+
+        # Detectar regiones de tablas (excluyendo cajas de algoritmos y gráficos vectoriales con Fig. X:)
+        raw_table_boxes = self._detect_table_regions(
+            page,
+            rules,
+            table_caption_boxes,
+            raw_blocks,
+            figure_captions=figure_caption_boxes,
+        )
+        table_boxes = [
+            tb for tb in raw_table_boxes
+            if not any(tb.iou(ab) > 0.25 or ab.coverage_by(tb) > 0.45 for ab in algorithm_boxes)
+        ]
         for tb in table_boxes:
             regions.append(LayoutRegion(kind="table", bbox=tb, confidence=0.92, source="model"))
 
@@ -304,7 +396,7 @@ class LayoutDetector:
                 for r in page.get_image_rects(xref):
                     ib = BoundingBox.from_fitz_rect(r)
                     if ib.width >= 35.0 and ib.height >= 35.0:
-                        if not any(ib.iou(tb) > 0.5 for tb in table_boxes):
+                        if not any(ib.iou(tb) > 0.4 or ib.coverage_by(tb) > 0.6 for tb in table_boxes):
                             figure_boxes.append(ib)
         except Exception:
             pass
@@ -361,6 +453,8 @@ class LayoutDetector:
         # Fusionar bandas de ecuaciones 2D fragmentadas (ej. numerador, denominador y tag '(1)' en bloques separados)
         consumed_by_formula: set[int] = set()
         for idx_tag, (bb_tag, txt_tag, _, _) in enumerate(prelim_text_blocks):
+            if idx_tag in consumed_by_algorithm:
+                continue
             clean_tag = " ".join(txt_tag.split()).strip()
             m_tag = re.fullmatch(r"\(\s*(\d+[a-zA-Z]?)\s*\)", clean_tag)
             if not m_tag:
@@ -371,7 +465,7 @@ class LayoutDetector:
             band_members = [idx_tag]
             union_eq = bb_tag
             for idx_other, (bb_o, txt_o, _, _) in enumerate(prelim_text_blocks):
-                if idx_other == idx_tag:
+                if idx_other == idx_tag or idx_other in consumed_by_algorithm:
                     continue
                 cy_o = (bb_o.y0 + bb_o.y1) * 0.5
                 if band_y0 <= cy_o <= band_y1 and len(txt_o.strip()) < 120:
@@ -387,12 +481,12 @@ class LayoutDetector:
                     metadata={"tag": eq_num},
                 ))
 
-        # Clasificar los bloques textuales que no caen dentro de tablas, figuras ni bandas de ecuación
+        # Clasificar los bloques textuales que no caen dentro de tablas, figuras, algoritmos ni bandas de ecuación
         for b_idx, (bb, text, spans, max_sz) in enumerate(prelim_text_blocks):
-            if b_idx in consumed_by_formula:
+            if b_idx in consumed_by_formula or b_idx in consumed_by_algorithm:
                 continue
-            # Si ya está absorbido por una tabla detectada, lo manejará TableRecognizer
-            if any(bb.coverage_by(tb) > 0.65 for tb in table_boxes):
+            # Si ya está absorbido por una tabla o algoritmo detectado, lo manejará su reconocedor
+            if any(bb.coverage_by(tb) > 0.65 for tb in table_boxes) or any(bb.coverage_by(ab) > 0.65 for ab in algorithm_boxes):
                 continue
 
             clean_single = " ".join(text.split())
@@ -415,18 +509,34 @@ class LayoutDetector:
             if any(bb.coverage_by(fb) > 0.75 for fb in figure_boxes) and len(clean_single) < 80:
                 continue
 
-            # 4. Título del artículo en página 1
-            if page_num == 1 and bb.y0 < (page_h * 0.35) and max_sz >= (body_size * 1.32) and len(clean_single) > 12:
+            # 4. Título del artículo en página 1 (excluyendo encabezados numerados o secciones canónicas)
+            if (
+                page_num == 1
+                and bb.y0 < (page_h * 0.35)
+                and max_sz >= (body_size * 1.32)
+                and len(clean_single) > 12
+                and not _HEADING_PREFIX_RE.match(clean_single)
+                and not _CANONICAL_SECTION_RE.match(clean_single)
+            ):
                 regions.append(LayoutRegion(kind="title", bbox=bb, confidence=0.95))
                 continue
 
-            # 5. Notas al pie (footnote) en la parte inferior de la columna/página
+            # 5. Biografías de autores (IEEE Transactions) — evaluar antes de footnote porque usan fuente de 8–8.5pt al final de página
+            has_nearby_portrait = any(
+                abs(p.y0 - bb.y0) < 60.0 and abs(p.x1 - bb.x0) < 45.0
+                for p in portraits
+            )
+            if _BIO_CUE_RE.search(clean_single) or has_nearby_portrait:
+                regions.append(LayoutRegion(kind="author_bio", bbox=bb, confidence=0.90))
+                continue
+
+            # 6. Notas al pie (footnote) en la parte inferior de la columna/página
             is_near_bottom = bb.y0 > (page_h * 0.72) or (footnote_rule_y is not None and bb.y0 >= (footnote_rule_y - 4.0))
             if is_near_bottom and (max_sz <= (body_size * 0.92) or _FOOTNOTE_START_RE.search(clean_single)):
                 regions.append(LayoutRegion(kind="footnote", bbox=bb, confidence=0.90))
                 continue
 
-            # 6. Ecuaciones aisladas (isolate_formula)
+            # 7. Ecuaciones aisladas (isolate_formula)
             is_eq, eq_tag = self._is_math_heavy_block(text, spans)
             if is_eq:
                 regions.append(LayoutRegion(
@@ -437,7 +547,7 @@ class LayoutDetector:
                 ))
                 continue
 
-            # 7. Encabezados de sección / subsección
+            # 8. Encabezados de sección / subsección
             if len(clean_single) < 115 and (
                 _HEADING_PREFIX_RE.match(clean_single)
                 or _CANONICAL_SECTION_RE.match(clean_single)
@@ -445,15 +555,6 @@ class LayoutDetector:
             ):
                 lvl = 3 if re.match(r"^\d+\.\d+", clean_single) else 2
                 regions.append(LayoutRegion(kind="section_header", bbox=bb, heading_level=lvl, confidence=0.92))
-                continue
-
-            # 8. Biografías de autores (IEEE Transactions)
-            has_nearby_portrait = any(
-                abs(p.y0 - bb.y0) < 60.0 and abs(p.x1 - bb.x0) < 45.0
-                for p in portraits
-            )
-            if _BIO_CUE_RE.search(clean_single) or has_nearby_portrait:
-                regions.append(LayoutRegion(kind="author_bio", bbox=bb, confidence=0.90))
                 continue
 
             # 9. Listas con viñetas

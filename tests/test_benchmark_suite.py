@@ -47,7 +47,7 @@ class TestBenchmarkSuite(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
             comparisons = run_synthetic_gold_benchmark(tmp_path)
-            self.assertEqual(len(comparisons), 5)
+            self.assertGreaterEqual(len(comparisons), 6)
 
             by_id = {c.case_id: c for c in comparisons}
 
@@ -70,6 +70,15 @@ class TestBenchmarkSuite(unittest.TestCase):
 
             # Gate 5: Interruptor de seguridad de saturación vectorial (< 2.5s)
             self.assertEqual(by_id["case5_dense_scatter_guard"].vision_score, 1.0)
+
+            # Gate 6 (Prioridad 1 / v3.1): Preservación de sangría de algoritmos >= 0.90
+            self.assertGreaterEqual(by_id["case6_algorithm_pseudocode"].vision_score, 0.90)
+
+            # Gate 7 (Prioridad 2 / v3.2): Grafo de citas y semántica de gráficos >= 0.90
+            self.assertGreaterEqual(by_id["case7_citations_and_chart_semantics"].vision_score, 0.90)
+
+            # Gate 8 (Prioridad 3 / v4.0): SemanticChunker RAG + aislamiento de biografías IEEE >= 0.90
+            self.assertGreaterEqual(by_id["case8_ieee_author_bios_and_rag_chunks"].vision_score, 0.90)
 
             # Probar generador de overlays visuales sobre case1
             overlays = render_annotated_pages(tmp_path / "case1_reading_order.pdf", tmp_path / "overlays")
