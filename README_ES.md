@@ -30,33 +30,32 @@ Al procesar artículos de investigación para LLMs o sistemas RAG, los extractor
 
 ---
 
-## ✨ Características Principales
+## ✨ Características Principales (Arquitectura v3.0)
 
-- 📖 **Flujo de Lectura Multicolumna Estricto:** Análisis de layout mediante Redes Neuronales de Grafos (GNN) que garantiza la lectura ordenada de columna por columna.
-- 📐 **Reconstrucción Matemática a LaTeX:** Convierte símbolos matemáticos Unicode (`U+1D400`–`U+1D7FF`), letras griegas y fórmulas a notación KaTeX estándar (`$...$` y `$$... \tag{N} $$`).
-- 🖼️ **Extracción de Figuras en Alta Resolución:** Extrae ilustraciones vectoriales y rasterizadas a 200–300 DPI en carpetas dedicadas y las enlaza a sus leyendas en Markdown.
-- 📊 **Tablas Genuinas sin Ruido:** Genera tablas estándar GitHub-Flavored Markdown (GFM) alineadas, suprimiendo tuberías vacías ficticias.
-- 🔤 **Anti-Kerning Físico:** Reduce el **99.6%** de palabras fusionadas calculando la distancia física entre cajas de glifos ($\Delta x$).
-- 🗂️ **Manifiesto de Grounding para RAG:** Genera automáticamente `scholarmark_manifest.json` indexando DOI, títulos, tablas, fórmulas y métricas clave (%, ms, FPS, GFLOPs).
-- ⚡ **Procesamiento Incremental (Delta-Only):** Compara marcas de tiempo para procesar únicamente documentos nuevos o modificados.
-- 💻 **Consola Interactiva Rich:** Dashboard en terminal con barras de progreso, estadísticas en tiempo real y tablas formateadas.
+- 🔌 **Motores de Extracción Intercambiables (`--engine auto|fast|vision|docling`):**
+  - `fast`: Pipeline de baja latencia con layout GNN de PyMuPDF4LLM y clustering vectorial transitivo Union-Find.
+  - `vision`: Pipeline modular híbrido asimétrico con `LayoutDetector`, `SpanMapper` nativo (0% alucinación textual), **Grafo DAG de Orden de Lectura** con aislamiento de notas al pie y unión de párrafos entre páginas, **FormulaRecognizer 2D** y **TableRecognizer HTML Jerárquico**.
+  - `docling`: Adaptador opcional de referencia hacia IBM Docling.
+- 📖 **Flujo de Lectura Multicolumna DAG:** Garantiza lectura columna por columna, segrega notas al pie al cierre para no cortar frases y une párrafos divididos entre páginas alrededor de figuras flotantes.
+- 📐 **Reconstrucción Matemática 2D a LaTeX:** Recupera fracciones vectoriales (`\frac{num}{den}`), subíndices y superíndices anidados ($x_{i_k}^{n+1}$), límites de sumatorias/integrales y matrices (`\begin{pmatrix}...\end{pmatrix}`), con validación sintáctica KaTeX.
+- 📊 **Tablas Jerárquicas en HTML Semántico y GFM:** Recupera tablas abiertas estilo LaTeX `booktabs`, encabezados multinivel (`colspan` y `rowspan`) y páginas rotadas (`/Rotate 90`) poblando cada celda desde coordenadas vectoriales nativas.
+- 🖼️ **Asociación de Leyendas 1:N y Recorte Elástico (4–16 pt):** Vincula múltiples subpaneles `(a)`, `(b)`, `(c)` a una leyenda compartida e incluye interruptor de seguridad vectorial ante gráficos de dispersión densos.
+- 🗂️ **Exportación JSON Canónica (`--json`) y Manifiesto RAG v3.0:** Genera `<paper>.scholarmark.json` y `scholarmark_manifest.json` indexando tablas GFM/HTML, ecuaciones y métricas (%, ms, FPS, GFLOPs).
 
 ---
 
 ## 📊 Benchmark y Mejoras Cuantitativas
 
-Auditado sobre 33 artículos de visión artificial y biomecánica:
+### Gold Suite v3.0: `fast` (Base v2.1) vs. `vision` (Pipeline Híbrido v3.0)
 
-| Dimensión de Calidad | Conversores Tradicionales (v1) | **ScholarMark (v2)** | Mejora / Impacto |
-| :--- | :---: | :---: | :---: |
-| **Palabras fusionadas (>25 letras continuas)** | 6,305 errores | **28** (solo URLs) | **-99.6% de errores** |
-| **Líneas con tuberías rotas (`\| \| \| \|`)** | 2,841 líneas | **84** líneas | **-97.0% de ruido** |
-| **Ecuaciones en LaTeX recuperadas** | 4 fórmulas | **217 fórmulas** | **+5,325% de cobertura** |
-| **Figuras extraídas a disco** | 0 imágenes (0%) | **943 imágenes** | **100% preservación visual** |
-| **Figuras vinculadas con leyendas** | 0 enlaces | **752 enlaces** | **Integración contextual** |
-| **Tablas estructuradas genuinas** | Colapsadas / perdidas | **128 a 213 tablas** | Tablas legibles |
-| **Orden de lectura en 2 columnas** | Entrelazado | Estricto y secuencial | Coherencia total |
-| **Tiempo total para 33 papers** | ~4.5 min | **4.5 min (con OCR + Layout + Imágenes)** | **~8.3s por paper** |
+| Caso de Prueba | Dimensión Auditada | Puntaje `fast` | Puntaje `vision` (v3.0) | Mejora Δ | Latencia `vision` |
+| :--- | :--- | :---: | :---: | :---: | :---: |
+| `case1_two_col_footnotes` | Orden de Lectura (Kendall-τ) | 0.9048 | **1.0000** | **+0.0952** | 145.6 ms |
+| `case2_2d_math` | Fidelidad Matemática 2D (1 - NED) | 0.0938 | **0.9355** | **+0.8417** | 112.4 ms |
+| `case3_booktabs_colspan` | Tabla Jerárquica (TEDS) | 0.4500 | **1.0000** | **+0.5500** | 682.0 ms |
+| `case4_multipanel_1n` | Leyendas Multipanel 1:N (F1) | 0.5000 | **1.0000** | **+0.5000** | 171.3 ms |
+| `case5_dense_scatter_guard` | Guarda Vectorial (<2.5s SLA) | 1.0000 | **1.0000** | **+0.0000** | 372.9 ms |
+| **PROMEDIO GLOBAL** | **Puntaje Compuesto Gold** | 0.5897 | **0.9871** | **+0.3974** | **~296 ms/caso** |
 
 ---
 
@@ -74,8 +73,8 @@ pip install -e .
 
 #### Extracción en Lote (Carpeta de PDFs)
 ```bash
-# Extraer todos los PDFs de 'papers/' hacia 'output/' con figuras
-scholarmark batch --source papers/ --output output/
+# Extraer todos los PDFs con el motor híbrido v3.0 y exportar JSON canónico
+scholarmark batch --source papers/ --output output/ --engine vision --json
 
 # Forzar re-conversión completa
 scholarmark batch --source papers/ --output output/ --force
@@ -83,7 +82,12 @@ scholarmark batch --source papers/ --output output/ --force
 
 #### Extracción de un Solo Artículo
 ```bash
-scholarmark single paper.pdf --output output/ --dpi 300
+scholarmark single paper.pdf --output output/ --engine vision --dpi 300 --json
+```
+
+#### Diagnóstico del Entorno y Motores
+```bash
+scholarmark doctor
 ```
 
 #### Generar Manifiesto de Grounding

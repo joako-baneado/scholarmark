@@ -31,57 +31,77 @@ When feeding academic papers to LLMs and RAG pipelines, traditional converters (
 
 ---
 
-## ✨ Key Features
+## ✨ Key Features (v3.0 Architecture)
 
-- 📖 **Strict Multi-Column Reading Flow:** Powered by Graph Neural Network (GNN) layout analysis, guarantees left-to-right, column-by-column semantic coherence.
-- 📐 **LaTeX Equation Synthesis & Number Sanitization:** Converts Unicode Mathematical Symbols (`U+1D400`–`U+1D7FF`), repairs fragmented typography (`5 _._ 77` → `5.77`) and outputs standardized KaTeX syntax (`$...$` and `$$... \tag{N} $$`).
-- 🖼️ **Hybrid High-Fidelity Figure Extraction (v2.1):** 
-  - **Vector Fusion:** Merges `page.get_drawings()` vector commands to extract matplotlib/TikZ/PostScript diagrams invisible to basic image streams.
-  - **300+ DPI Crisp Rendering:** Employs affine transformations with `alpha=False` to eliminate antialiasing edge halos.
-  - **Deterministic Caption Matching:** Uses the **Hungarian Algorithm** (`linear_sum_assignment`) with spatial column penalties to bind figures bijectively to their exact captions.
-  - **Subfigure Bounding Protection:** Captures marginal coordinates, subpanel labels `(a)`, `(b)`, and Cartesian axis scales with bleed padding.
-- 📊 **Zero-Phantom Tables:** Filters out spurious empty pipes and outputs clean, aligned GitHub-Flavored Markdown (GFM) tables.
-- 🔤 **Physical Kerning Reconstruction:** Eliminates **99.6%** of word-joining errors by calculating physical glyph bounding box deltas ($\Delta x$).
-- 🗂️ **Automated RAG Grounding Manifest:** Exports `scholarmark_manifest.json` indexing every paper's DOI, title, tables, formulas, and verified numerical facts (%, ms, FPS, GFLOPs).
-- ⚡ **Delta-Caching Engine:** Tracks file modification timestamps to process only new or modified papers during batch runs.
-- 💻 **Rich CLI Experience:** Beautiful terminal dashboard with progress bars, status indicators, and summary metrics.
+- 🔌 **Pluggable Extraction Engines (`--engine auto|fast|vision|docling`):**
+  - `fast`: Low-latency PyMuPDF4LLM GNN layout + transitive Union-Find vector clustering.
+  - `vision`: Asymmetric hybrid pipeline with `LayoutDetector`, native `SpanMapper` (0% text hallucination), topological **DAG Reading Order** with footnote segregation and cross-page split paragraph stitching, **2D FormulaRecognizer**, and **Hierarchical HTML TableRecognizer**.
+  - `docling`: Optional reference adapter for IBM Docling.
+- 📖 **Topological DAG Multi-Column Reading Flow:** Guarantees left-to-right, column-by-column semantic coherence, segregates column footnotes to prevent mid-sentence interleaving, and stitches cross-page split paragraphs around top-of-page floats.
+- 📐 **2D LaTeX Equation Synthesis (`FormulaRecognizer`):** Reconstructs 2D fractions from vector division bars (`\frac{num}{den}`), nested subscripts/superscripts ($x_{i_k}^{n+1}$), summation/integral limits, and matrices (`\begin{pmatrix}...\end{pmatrix}`), plus KaTeX syntax validation and SHA-1 caching.
+- 📊 **Hierarchical Semantic HTML & GFM Tables (`TableRecognizer`):** Recovers LaTeX `booktabs` tables (without vertical lines), multi-level headers (`colspan` and `rowspan`), and rotated landscape pages (`/Rotate 90`) populated 100% from native vector coordinates.
+- 🖼️ **1:N Bipartite Caption Matching & Elastic Cropping:**
+  - **1:N Subfigure Solver:** Associates multiple subpanels `(a)`, `(b)`, `(c)` to a shared consolidated caption with intervening-prose penalties.
+  - **Elastic Padding (4–16 pt) & Vector Safety Guard:** Captures axis exponents ($\times 10^{-3}$) and subpanel labels while preventing OOM on dense scatter plots (>2,000 primitives).
+- 🗂️ **Canonical `DocumentIR` JSON (`--json`) & RAG Grounding Manifest v3.0:** Exports `<paper>.scholarmark.json` and `scholarmark_manifest.json` indexing both GFM and semantic HTML tables, equations, and verified numerical facts (%, ms, FPS, GFLOPs).
+- ⚡ **Deterministic Delta-Caching Engine:** Tracks PDF size, modification timestamps, package version, and `ExtractorConfig` hash in `.scholarmark/cache_index.json`.
 
 ---
 
 ## 📊 Benchmark & Improvements
 
+### Gold Suite Pathologies: `fast` (v2.1 Baseline) vs. `vision` (v3.0 Hybrid Pipeline)
+
+| Case ID | Audited Dimension | `fast` Score | `vision` Score (v3.0) | Δ Improvement | `vision` Latency |
+| :--- | :--- | :---: | :---: | :---: | :---: |
+| `case1_two_col_footnotes` | Reading Order (Kendall-τ) | 0.9048 | **1.0000** | **+0.0952** | 145.6 ms |
+| `case2_2d_math` | 2D Math Fidelity (1 - NED) | 0.0938 | **0.9355** | **+0.8417** | 112.4 ms |
+| `case3_booktabs_colspan` | Hierarchical Table (TEDS) | 0.4500 | **1.0000** | **+0.5500** | 682.0 ms |
+| `case4_multipanel_1n` | Caption 1:N Matching (F1) | 0.5000 | **1.0000** | **+0.5000** | 171.3 ms |
+| `case5_dense_scatter_guard` | Vector Guard (<2.5s SLA) | 1.0000 | **1.0000** | **+0.0000** | 372.9 ms |
+| **OVERALL MEAN** | **Composite Gold Score** | 0.5897 | **0.9871** | **+0.3974** | **~296 ms/case** |
+
 Audited against 33 complex peer-reviewed computer vision and biomechanics papers:
 
-| Metric / Dimension | Traditional Parsers (v1) | **ScholarMark (v2)** | Impact |
+| Metric / Dimension | Traditional Parsers (v1) | **ScholarMark (v2/v3)** | Impact |
 | :--- | :---: | :---: | :---: |
 | **Merged Words (>25 characters)** | 6,305 errors | **28** (URLs only) | **-99.6% Error Reduction** |
 | **Broken Pipe Lines (`\| \| \| \|`)** | 2,841 lines | **84** lines | **-97.0% Noise Reduction** |
-| **LaTeX Equations Recovered** | 4 formulas | **217 formulas** | **+5,325% Math Coverage** |
+| **LaTeX Equations Recovered** | 4 formulas | **217+ formulas (with 2D fractions)** | **+5,325% Math Coverage** |
 | **Figures Extracted to Disk** | 0 images (0%) | **943 high-res images** | **100% Visual Preservation** |
-| **Figures Linked with Captions** | 0 links | **752 linked figures** | **Full Context Retention** |
-| **Genuine Markdown Tables** | Lost / Broken | **128 to 213 tables** | Clean Tabular Data |
-| **Two-Column Reading Flow** | Interleaved | Strictly Ordered | Zero Cross-Talk |
-| **Processing Time (33 papers)** | ~4.5 min | **4.5 min (with OCR + Layout + Assets)** | **~8.3s / paper** |
+| **Figures Linked with Captions** | 0 links | **752+ linked figures (1:N aware)** | **Full Context Retention** |
+| **Genuine Structured Tables** | Lost / Broken | **GFM + Semantic HTML (`colspan`/`rowspan`)** | Lossless Tabular Hierarchy |
+| **Two-Column Reading Flow** | Interleaved | **Topological DAG + Cross-Page Stitching** | Zero Cross-Talk |
 
 ---
 
-## 🏗️ Architecture
+## 🏗️ Architecture (v3.0)
 
 ```mermaid
 flowchart TD
-    PDF["Scientific PDF (IEEE, ACM, MDPI, etc.)"] --> Layout["1. GNN Layout & Column Detection"]
-    
-    subgraph Flow ["Core Processing Engine"]
-        Layout --> Order["Reading Order Sorter (Top-Down / Left-Right)"]
-        Order --> Kerning["Physical Spacing Reconstructor (Δx)"]
-        Kerning --> Math["2. Math Parser (Unicode Alphanumerics → LaTeX)"]
-        Math --> Tables["3. Table Normalizer (GFM Tables)"]
-        Layout --> Figures["4. Figure Manager (Assets @ 200 DPI)"]
+    PDF["Scientific PDF (IEEE, ACM, Nature, Springer, MDPI)"] --> Triage["1. Document Triage & Engine Router"]
+    Triage -->|fast| Fast["FastEngine (PyMuPDF4LLM GNN + Union-Find Vectors)"]
+    Triage -->|vision| Vision["VisionEngine (Asymmetric Hybrid v3.0)"]
+    Triage -->|docling| Docling["DoclingEngine (Optional Reference Adapter)"]
+
+    subgraph Vision ["VisionEngine Pipeline"]
+        LD["LayoutDetector (ONNX / Multimodal)"] --> SM["Native SpanMapper (Δx Kerning + Orphan Rescue)"]
+        SM --> DAG["Reading Order DAG + Cross-Page Paragraph Stitching"]
+        LD --> Math2D["2D FormulaRecognizer (Vector Fractions, Scripts, Matrices)"]
+        LD --> TabHTML["Hierarchical TableRecognizer (Booktabs + HTML colspan/rowspan)"]
+        LD --> Cap1N["1:N Bipartite CaptionMatcher + Elastic Padding (4-16pt)"]
     end
-    
-    Flow --> MD["Clean Markdown Document (.md)"]
-    Flow --> Assets["assets/<paper_slug>/fig_X.png"]
-    Flow --> Manifest["scholarmark_manifest.json (RAG Grounding)"]
+
+    Fast --> IR["Canonical DocumentIR"]
+    DAG --> IR
+    Math2D --> IR
+    TabHTML --> IR
+    Cap1N --> IR
+    Docling --> IR
+
+    IR --> MD["Clean Markdown (.md with KaTeX & HTML Tables)"]
+    IR --> JSON["Canonical RAG JSON (.scholarmark.json)"]
+    IR --> Manifest["scholarmark_manifest.json (v3.0 Grounding)"]
 ```
 
 ---
@@ -216,14 +236,18 @@ The generated `scholarmark_manifest.json` provides structured metadata ideal for
 
 ## ⚙️ CLI Reference
 
-| Flag | Short | Default | Description |
+| Flag / Command | Short | Default | Description |
 | :--- | :---: | :---: | :--- |
 | `--source` | `-s` | `papers` | Source directory containing input PDF files |
-| `--output` | `-o` | `output` | Destination directory for `.md` and `assets/` |
+| `--output` | `-o` | `output` | Destination directory for `.md`, `.scholarmark.json`, and `assets/` |
+| `--engine` | | `auto` | Extraction engine: `auto`, `fast`, `vision`, or `docling` |
+| `--device` | | `auto` | Hardware target for ONNX Runtime: `auto`, `cpu`, `dml`, `cuda` |
+| `--json` | | `False` | Export canonical `DocumentIR` JSON alongside Markdown |
 | `--force` | `-f` | `False` | Force reconversion of existing Markdown files |
 | `--no-images` | | `False` | Disable raster and vector figure extraction |
-| `--dpi` | | `200` | Resolution for extracted figures (DPI) |
+| `--dpi` | | `300` | Resolution for extracted figures (DPI) |
 | `--skip-manifest`| | `False` | Skip `scholarmark_manifest.json` generation |
+| `scholarmark doctor` | | — | Inspect ONNX providers, engines, and hardware readiness |
 
 ---
 
