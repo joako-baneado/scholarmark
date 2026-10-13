@@ -5,11 +5,13 @@ Engine registry and factory for ScholarMark v3.0.
 from typing import Dict, Type
 from .base import BaseEngine
 from .fast import FastEngine
+from .vision import VisionEngine
 from .docling_engine import DoclingEngine
 from ..config import ExtractorConfig
 
 ENGINE_REGISTRY: Dict[str, Type[BaseEngine]] = {
     "fast": FastEngine,
+    "vision": VisionEngine,
     "docling": DoclingEngine,
 }
 
@@ -21,13 +23,14 @@ def register_engine(name: str, engine_cls: Type[BaseEngine]) -> None:
 def get_engine(config: ExtractorConfig) -> BaseEngine:
     """
     Selecciona e instancia el motor de extracción solicitado en config.engine:
-    - 'auto': prioriza 'vision' si está registrado y disponible; de lo contrario usa 'fast'.
+    - 'auto': usa 'vision' si onnx_model_path está configurado, y 'fast' (con PyMuPDF GNN layout)
+      como motor predeterminado de baja latencia; ambos disponibles explícitamente con --engine.
     - 'fast' | 'vision' | 'docling': instancia explícitamente el motor solicitado.
     """
     requested = (config.engine or "auto").lower().strip()
     if requested == "auto":
-        if "vision" in ENGINE_REGISTRY:
-            vis = ENGINE_REGISTRY["vision"](config)
+        if config.onnx_model_path or config.export_json:
+            vis = VisionEngine(config)
             ok, _ = vis.available()
             if ok:
                 return vis
@@ -43,4 +46,12 @@ def get_engine(config: ExtractorConfig) -> BaseEngine:
     return engine
 
 
-__all__ = ["BaseEngine", "FastEngine", "DoclingEngine", "ENGINE_REGISTRY", "register_engine", "get_engine"]
+__all__ = [
+    "BaseEngine",
+    "FastEngine",
+    "VisionEngine",
+    "DoclingEngine",
+    "ENGINE_REGISTRY",
+    "register_engine",
+    "get_engine",
+]
