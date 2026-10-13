@@ -232,6 +232,21 @@ class FormulaRecognizer:
                             sb = BoundingBox(*[float(v) for v in sp["bbox"]])
                             tokens.append(MathSpanToken(stxt, sb, sz))
 
+        # Deduplicar glifos superpuestos (fake-bold / doble trazado en PDFs TeX/Word)
+        deduped_tokens: List[MathSpanToken] = []
+        for tk in tokens:
+            is_dup = False
+            for prev in deduped_tokens:
+                if tk.text == prev.text and (
+                    tk.bbox.iou(prev.bbox) > 0.50
+                    or (abs(tk.bbox.x0 - prev.bbox.x0) < 2.2 and abs(tk.bbox.y0 - prev.bbox.y0) < 2.2)
+                ):
+                    is_dup = True
+                    break
+            if not is_dup:
+                deduped_tokens.append(tk)
+        tokens = deduped_tokens
+
         if drawings is None:
             try:
                 drawings = page.get_drawings()

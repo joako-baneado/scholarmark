@@ -24,7 +24,7 @@ _ALGO_REF_RE = re.compile(r"\b(?:Algorithm|Alg\.?|Algoritmo|Procedure)\s*([0-9IV
 _EQ_REF_RE = re.compile(r"\b(?:Eq\.?|Equation|Ecuación)\s*\(?\s*(\d+[a-zA-Z]?)\s*\)?", re.IGNORECASE)
 _EQ_TRAIL_TAG_RE = re.compile(r"\((\d+[a-zA-Z]?)\)\s*$")
 _AUTHOR_BIO_TEXT_RE = re.compile(
-    r"\b(?:received\s+the\s+(?:B\.S\.|M\.S\.|Ph\.D\.|B\.Eng\.|M\.Eng\.)\s+degree|research\s+interests\s+include|is\s+currently\s+a(?:n)?\s+(?:Professor|Associate\s+Professor|Assistant\s+Professor|Postdoctoral|Fellow))\b",
+    r"\b(?:received\s+the\s+(?:B\.S\.|M\.S\.|Ph\.D\.|B\.Eng\.|M\.Eng\.|B\.E\.|M\.E\.|B\.Sc\.|M\.Sc\.|B\.Tech|M\.Tech|bachelor|master|doctor)[^.]{0,30}\s+degree|research\s+interests\s+include|is\s+currently\s+a(?:n)?\s+(?:Professor|Associate\s+Professor|Assistant\s+Professor|Postdoctoral|Fellow))\b",
     re.IGNORECASE,
 )
 _METRIC_RE = re.compile(

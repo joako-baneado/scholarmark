@@ -117,12 +117,17 @@ class ChartSemanticsExtractor:
                     continue
                 seen.add(key_lower)
 
-                # 2. Etiquetas de ejes X / Y (por palabras clave de magnitud/unidad o ubicación perimetral con >= 2 palabras)
-                if _AXIS_KEYWORD_RE.search(clean_txt) or (near_perimeter and " " in clean_txt):
-                    axis_labels.append(clean_txt)
-                else:
+                # 2. Etiquetas de ejes X / Y (por palabras clave de magnitud/unidad)
+                if _AXIS_KEYWORD_RE.search(clean_txt):
+                    if len(clean_txt.split()) <= 6:
+                        axis_labels.append(clean_txt)
+                elif len(clean_txt.split()) <= 4 and len(clean_txt) >= 2:
                     # 3. Series de leyenda / nombres de modelos o barras comparadas
                     legend_series.append(clean_txt)
+
+        # Solo conservar legend_series si el gráfico también tiene ejes o valores numéricos reales
+        if not axis_labels and not data_annotations and not tick_values:
+            legend_series = []
 
         return ChartSemantics(
             axis_labels=axis_labels[:12],

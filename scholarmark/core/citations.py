@@ -16,9 +16,11 @@ _REF_SECTION_RE = re.compile(
     r"\b(?:REFERENCES|BIBLIOGRAPHY|REFERENCIAS|LITERATURE\s+CITED)\b",
     re.IGNORECASE,
 )
-_DOI_RE = re.compile(r"\b(10\.\d{4,9}/[-._;()/:A-Za-z0-9]+)\b")
+_DOI_RE = re.compile(r"\b(10\s*\.\s*\d{4,9}\s*/\s*[-._;()/:A-Za-z0-9]+(?:\s*[-._/]\s*[-._;()/:A-Za-z0-9]+)*)")
 _YEAR_RE = re.compile(r"\b(19[5-9]\d|20[0-3]\d)\b")
-_QUOTED_TITLE_RE = re.compile(r'["“”]([^"“”]{8,240})["“”]')
+_QUOTED_TITLE_RE = re.compile(
+    r'(?:["“”]|‘{1,2}|`{1,2})\s*([^"“”’\']{8,260}?)\s*(?:["“”]|’{1,2}|\'{1,2})'
+)
 _METRIC_TOKEN_RE = re.compile(
     r"\b\d+(?:\.\d+)?\s*(?:%|(?:ms|s|FPS|fps|Hz|kHz|GFLOPs|MFLOPs|MB|GB|params|dB|mm|mAP)\b)"
 )
@@ -144,8 +146,14 @@ class BibliographyParser:
     @staticmethod
     def _parse_single_entry(ref_id: str, raw_body: str) -> ReferenceEntry:
         clean_body = " ".join(raw_body.split()).strip()
+        clean_body = re.sub(
+            r"\s+[A-Z][A-Za-z.\-\s]{2,45}\s+received\s+the\s+(?:B\.S\.|M\.S\.|Ph\.D\.|B\.E\.|M\.E\.|B\.Tech|M\.Tech|bachelor|master|doctor).+$",
+            "",
+            clean_body,
+            flags=re.IGNORECASE,
+        ).strip()
         doi_m = _DOI_RE.search(clean_body)
-        doi = doi_m.group(1).rstrip(".") if doi_m else None
+        doi = re.sub(r"\s+", "", doi_m.group(1)).rstrip(".,;") if doi_m else None
 
         years = [int(y) for y in _YEAR_RE.findall(clean_body)]
         year = years[-1] if years else None
@@ -154,7 +162,7 @@ class BibliographyParser:
         authors = ""
         venue = ""
 
-        # Formato IEEE con título entre comillas: Y. Zhang et al., "Deep Pose Estimation," in CVPR, 2024.
+        # Formato IEEE con título entre comillas ("...", “...”, ‘‘...’’):
         q_m = _QUOTED_TITLE_RE.search(clean_body)
         if q_m:
             title = q_m.group(1).strip().rstrip(",.")
@@ -168,14 +176,14 @@ class BibliographyParser:
                 authors = apa_m.group(1).strip().rstrip(",.")
                 year = int(apa_m.group(2))
                 rest = apa_m.group(3).strip()
-                segs = [s.strip() for s in rest.split(".") if s.strip()]
+                segs = [s.strip() for s in re.split(r"(?<![A-Z])\.\s+", rest) if s.strip()]
                 if segs:
                     title = segs[0]
                 if len(segs) >= 2:
                     venue = ". ".join(segs[1:])
             else:
-                # Separación por puntos: Autor(es). Título. Venue, Año.
-                segs = [s.strip() for s in clean_body.split(".") if len(s.strip()) > 2]
+                # Separación por puntos ignorando iniciales de nombres (ej. "D. Mehta")
+                segs = [s.strip() for s in re.split(r"(?<![A-Z])\.\s+", clean_body) if len(s.strip()) > 3]
                 if len(segs) >= 2:
                     authors = segs[0]
                     title = segs[1]

@@ -43,7 +43,7 @@ _FOOTNOTE_START_RE = re.compile(
 )
 _FORMULA_TAG_END_RE = re.compile(r"\((\d+[a-zA-Z]?)\)\s*$")
 _BIO_CUE_RE = re.compile(
-    r"\b(?:received\s+the\s+(?:B\.S\.|M\.S\.|Ph\.D\.|B\.E\.|B\.Sc\.)|is\s+currently\s+a\s+(?:Professor|Researcher|Ph\.D\.)|His\s+research\s+interests|Her\s+research\s+interests|Member,\s+IEEE|Fellow,\s+IEEE)\b",
+    r"\b(?:received\s+the\s+(?:B\.S\.|M\.S\.|Ph\.D\.|B\.E\.|M\.E\.|B\.Sc\.|M\.Sc\.|B\.Tech|M\.Tech|bachelor|master|doctor)|is\s+currently\s+(?:a|an|pursuing\s+the)\s+(?:Professor|Associate\s+Professor|Assistant\s+Professor|Researcher|Ph\.D\.)|His\s+research\s+interests|Her\s+(?:current\s+)?research\s+interests|Member,\s+IEEE|Fellow,\s+IEEE)\b",
     re.IGNORECASE,
 )
 
@@ -389,6 +389,10 @@ class LayoutDetector:
             regions.append(LayoutRegion(kind="table", bbox=tb, confidence=0.92, source="model"))
 
         # Detectar figuras ráster y vectoriales (excluyendo retratos diminutos de biografías y tablas)
+        bio_text_boxes = [
+            bb for (bb, txt, _, _) in prelim_text_blocks
+            if _BIO_CUE_RE.search(" ".join(txt.split()))
+        ]
         figure_boxes: List[BoundingBox] = []
         try:
             for img in page.get_images():
@@ -396,8 +400,20 @@ class LayoutDetector:
                 for r in page.get_image_rects(xref):
                     ib = BoundingBox.from_fitz_rect(r)
                     if ib.width >= 35.0 and ib.height >= 35.0:
-                        if not any(ib.iou(tb) > 0.4 or ib.coverage_by(tb) > 0.6 for tb in table_boxes):
-                            figure_boxes.append(ib)
+                        if any(ib.iou(tb) > 0.4 or ib.coverage_by(tb) > 0.6 for tb in table_boxes):
+                            continue
+                        is_portrait = any(ib.iou(p) > 0.65 for p in portraits)
+                        near_bio = any(
+                            abs(p_bio.y0 - ib.y0) < 85.0 and abs(p_bio.x0 - ib.x1) < 55.0
+                            for p_bio in bio_text_boxes
+                        )
+                        near_fig_cap = any(
+                            abs(fc.y0 - ib.y1) < 55.0 or abs(ib.y0 - fc.y1) < 55.0
+                            for fc in figure_caption_boxes
+                        )
+                        if is_portrait and (near_bio or not near_fig_cap):
+                            continue
+                        figure_boxes.append(ib)
         except Exception:
             pass
 
