@@ -31,77 +31,81 @@ When feeding academic papers to LLMs and RAG pipelines, traditional converters (
 
 ---
 
-## ✨ Key Features (v3.0 Architecture)
+## ✨ Key Features (v4.0 Architecture)
 
 - 🔌 **Pluggable Extraction Engines (`--engine auto|fast|vision|docling`):**
   - `fast`: Low-latency PyMuPDF4LLM GNN layout + transitive Union-Find vector clustering.
-  - `vision`: Asymmetric hybrid pipeline with `LayoutDetector`, native `SpanMapper` (0% text hallucination), topological **DAG Reading Order** with footnote segregation and cross-page split paragraph stitching, **2D FormulaRecognizer**, and **Hierarchical HTML TableRecognizer**.
+  - `vision`: Asymmetric hybrid pipeline with `LayoutDetector`, native `SpanMapper` (0% text hallucination), topological **DAG Reading Order**, **2D FormulaRecognizer** (with PUA fallback), **Hierarchical HTML TableRecognizer** (with raster OCR fallback), **AlgorithmRecognizer**, **ChartSemanticsExtractor**, **CitationLinker**, and **SemanticChunker**.
   - `docling`: Optional reference adapter for IBM Docling.
-- 📖 **Topological DAG Multi-Column Reading Flow:** Guarantees left-to-right, column-by-column semantic coherence, segregates column footnotes to prevent mid-sentence interleaving, and stitches cross-page split paragraphs around top-of-page floats.
-- 📐 **2D LaTeX Equation Synthesis (`FormulaRecognizer`):** Reconstructs 2D fractions from vector division bars (`\frac{num}{den}`), nested subscripts/superscripts ($x_{i_k}^{n+1}$), summation/integral limits, and matrices (`\begin{pmatrix}...\end{pmatrix}`), plus KaTeX syntax validation and SHA-1 caching.
-- 📊 **Hierarchical Semantic HTML & GFM Tables (`TableRecognizer`):** Recovers LaTeX `booktabs` tables (without vertical lines), multi-level headers (`colspan` and `rowspan`), and rotated landscape pages (`/Rotate 90`) populated 100% from native vector coordinates.
-- 🖼️ **1:N Bipartite Caption Matching & Elastic Cropping:**
-  - **1:N Subfigure Solver:** Associates multiple subpanels `(a)`, `(b)`, `(c)` to a shared consolidated caption with intervening-prose penalties.
-  - **Elastic Padding (4–16 pt) & Vector Safety Guard:** Captures axis exponents ($\times 10^{-3}$) and subpanel labels while preventing OOM on dense scatter plots (>2,000 primitives).
-- 🗂️ **Canonical `DocumentIR` JSON (`--json`) & RAG Grounding Manifest v3.0:** Exports `<paper>.scholarmark.json` and `scholarmark_manifest.json` indexing both GFM and semantic HTML tables, equations, and verified numerical facts (%, ms, FPS, GFLOPs).
-- ⚡ **Deterministic Delta-Caching Engine:** Tracks PDF size, modification timestamps, package version, and `ExtractorConfig` hash in `.scholarmark/cache_index.json`.
+- 📖 **Topological DAG Multi-Column Reading Flow:** Guarantees left-to-right, column-by-column semantic coherence, segregates column footnotes to prevent mid-sentence interleaving, isolates non-rectangular IEEE author biographies, and stitches cross-page split paragraphs around top-of-page floats.
+- 📐 **2D LaTeX Equation Synthesis & PUA Repair (`FormulaRecognizer`):** Reconstructs 2D fractions from vector division bars (`\frac{num}{den}`), nested subscripts/superscripts ($x_{i_k}^{n+1}$), summation/integral limits, matrices (`\begin{pmatrix}...\end{pmatrix}`), and corrupted Private Use Area (`PUA`) math glyphs.
+- 📊 **Hierarchical Semantic HTML, Booktabs & Raster Tables (`TableRecognizer`):** Recovers LaTeX `booktabs` tables (without vertical lines), multi-level headers (`colspan` and `rowspan`), rotated landscape pages (`/Rotate 90`), and 100% raster/image tables via morphological 1D projection + selective OCR.
+- 💻 **Structured Pseudocode & Algorithm Extraction (`AlgorithmRecognizer`):** Preserves `Algorithm N` / `Procedure` blocks (`algorithm2e` / `algpseudocode`) with exact nested loop indentation ($\Delta x$), line numbers, and `Require:`/`Ensure:` specifications.
+- 🔗 **Bidirectional Citation Graph & Chart Semantics (`v3.2`):** Parses IEEE `[N]` and APA author-year bibliographies, links inline citation ranges (`[1]–[3]`) to quantitative metrics (`%`, `ms`, `FPS`), and extracts vector chart axes, legend series, and data annotations (`ChartSemanticsExtractor`).
+- 🧩 **DocumentIR-Aware Semantic RAG Chunker (`--chunks` / `scholarmark chunk`):** Exports `*.chunks.jsonl` where tables, figures, algorithms, and formulas are emitted as atomic chunks, prose chunks inherit hierarchical section breadcrumbs (`section_path`), and every chunk is hydrated in $O(1)$ with cited references and cross-referenced artifacts (`Fig. N`, `Table N`, `Algorithm N`, `Eq. (N)`).
 
 ---
 
 ## 📊 Benchmark & Improvements
 
-### Gold Suite Pathologies: `fast` (v2.1 Baseline) vs. `vision` (v3.0 Hybrid Pipeline)
+### Gold Suite Pathologies: `fast` (v2.1 Baseline) vs. `vision` (v4.0 Hybrid Pipeline)
 
-| Case ID | Audited Dimension | `fast` Score | `vision` Score (v3.0) | Δ Improvement | `vision` Latency |
+| Case ID | Audited Dimension | `fast` Score | `vision` Score (v4.0) | Δ Improvement | `vision` Latency |
 | :--- | :--- | :---: | :---: | :---: | :---: |
-| `case1_two_col_footnotes` | Reading Order (Kendall-τ) | 0.9048 | **1.0000** | **+0.0952** | 145.6 ms |
-| `case2_2d_math` | 2D Math Fidelity (1 - NED) | 0.0938 | **0.9355** | **+0.8417** | 112.4 ms |
-| `case3_booktabs_colspan` | Hierarchical Table (TEDS) | 0.4500 | **1.0000** | **+0.5500** | 682.0 ms |
-| `case4_multipanel_1n` | Caption 1:N Matching (F1) | 0.5000 | **1.0000** | **+0.5000** | 171.3 ms |
-| `case5_dense_scatter_guard` | Vector Guard (<2.5s SLA) | 1.0000 | **1.0000** | **+0.0000** | 372.9 ms |
-| **OVERALL MEAN** | **Composite Gold Score** | 0.5897 | **0.9871** | **+0.3974** | **~296 ms/case** |
+| `case1_two_col_footnotes` | Reading Order (Kendall-τ) | 0.9048 | **1.0000** | **+0.0952** | 176.9 ms |
+| `case2_2d_math` | 2D Math Fidelity (1 - NED) | 0.0938 | **0.9355** | **+0.8417** | 147.8 ms |
+| `case3_booktabs_colspan` | Hierarchical Table (TEDS) | 0.4500 | **1.0000** | **+0.5500** | 871.3 ms |
+| `case4_multipanel_1n` | Caption 1:N Matching (F1) | 0.5000 | **1.0000** | **+0.5000** | 151.9 ms |
+| `case5_dense_scatter_guard` | Vector Guard (<2.5s SLA) | 1.0000 | **1.0000** | **+0.0000** | 427.7 ms |
+| `case6_algorithm_pseudocode` | Algorithm Indentation Acc. (`v3.1`) | 0.2500 | **1.0000** | **+0.7500** | 217.0 ms |
+| `case7_citations_and_chart_semantics` | Citation Graph & Chart Meta (`v3.2`) | 0.0000 | **1.0000** | **+1.0000** | 230.5 ms |
+| `case8_ieee_author_bios_and_rag_chunks` | RAG Semantic Chunks & Bio Guard (`v4.0`) | 0.1667 | **1.0000** | **+0.8333** | 186.7 ms |
+| **OVERALL MEAN** | **Composite Gold Score (8 Cases)** | **0.4207** | **0.9919** | **+0.5713** | **~301 ms/case** |
 
 Audited against 33 complex peer-reviewed computer vision and biomechanics papers:
 
-| Metric / Dimension | Traditional Parsers (v1) | **ScholarMark (v2/v3)** | Impact |
+| Metric / Dimension | Traditional Parsers (v1) | **ScholarMark (v2–v4)** | Impact |
 | :--- | :---: | :---: | :---: |
 | **Merged Words (>25 characters)** | 6,305 errors | **28** (URLs only) | **-99.6% Error Reduction** |
 | **Broken Pipe Lines (`\| \| \| \|`)** | 2,841 lines | **84** lines | **-97.0% Noise Reduction** |
 | **LaTeX Equations Recovered** | 4 formulas | **217+ formulas (with 2D fractions)** | **+5,325% Math Coverage** |
-| **Figures Extracted to Disk** | 0 images (0%) | **943 high-res images** | **100% Visual Preservation** |
+| **Figures Extracted to Disk** | 0 images (0%) | **943 high-res images + Chart Meta** | **100% Visual Preservation** |
 | **Figures Linked with Captions** | 0 links | **752+ linked figures (1:N aware)** | **Full Context Retention** |
 | **Genuine Structured Tables** | Lost / Broken | **GFM + Semantic HTML (`colspan`/`rowspan`)** | Lossless Tabular Hierarchy |
 | **Two-Column Reading Flow** | Interleaved | **Topological DAG + Cross-Page Stitching** | Zero Cross-Talk |
 
 ---
 
-## 🏗️ Architecture (v3.0)
+## 🏗️ Architecture (v4.0)
 
 ```mermaid
 flowchart TD
     PDF["Scientific PDF (IEEE, ACM, Nature, Springer, MDPI)"] --> Triage["1. Document Triage & Engine Router"]
     Triage -->|fast| Fast["FastEngine (PyMuPDF4LLM GNN + Union-Find Vectors)"]
-    Triage -->|vision| Vision["VisionEngine (Asymmetric Hybrid v3.0)"]
+    Triage -->|vision| Vision["VisionEngine (Asymmetric Hybrid v4.0)"]
     Triage -->|docling| Docling["DoclingEngine (Optional Reference Adapter)"]
 
     subgraph Vision ["VisionEngine Pipeline"]
         LD["LayoutDetector (ONNX / Multimodal)"] --> SM["Native SpanMapper (Δx Kerning + Orphan Rescue)"]
         SM --> DAG["Reading Order DAG + Cross-Page Paragraph Stitching"]
-        LD --> Math2D["2D FormulaRecognizer (Vector Fractions, Scripts, Matrices)"]
-        LD --> TabHTML["Hierarchical TableRecognizer (Booktabs + HTML colspan/rowspan)"]
-        LD --> Cap1N["1:N Bipartite CaptionMatcher + Elastic Padding (4-16pt)"]
+        LD --> Math2D["2D FormulaRecognizer + PUA Fallback"]
+        LD --> TabHTML["Hierarchical TableRecognizer + Raster OCR Fallback"]
+        LD --> Algo["AlgorithmRecognizer (Nested Indentation Δx)"]
+        LD --> Cap1N["1:N CaptionMatcher + ChartSemanticsExtractor"]
     end
 
-    Fast --> IR["Canonical DocumentIR"]
+    Fast --> IR["Canonical DocumentIR + CitationLinker Graph"]
     DAG --> IR
     Math2D --> IR
     TabHTML --> IR
+    Algo --> IR
     Cap1N --> IR
     Docling --> IR
 
-    IR --> MD["Clean Markdown (.md with KaTeX & HTML Tables)"]
+    IR --> MD["Clean Markdown (.md with KaTeX, HTML Tables & Chart Meta)"]
     IR --> JSON["Canonical RAG JSON (.scholarmark.json)"]
-    IR --> Manifest["scholarmark_manifest.json (v3.0 Grounding)"]
+    IR --> Chunks["Semantic RAG Chunks (.chunks.jsonl)"]
+    IR --> Manifest["scholarmark_manifest.json (v4.0 Grounding)"]
 ```
 
 ---

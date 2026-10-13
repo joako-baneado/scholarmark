@@ -99,32 +99,54 @@ Tras evaluar los artefactos producidos por `v3.2`, se incorporan **3 ajustes té
 
 ## Prioridad 3 (`v4.0`): Exportación Nativa de Chunks Semánticos para Scientific RAG y Benchmark Multi-Editorial
 
-**Estado:** `EN EJECUCIÓN (Ajustado tras Gate 2)`
+**Estado:** `COMPLETADO (Commit 41ac8fb)`
 
 ### 3.1. Objetivo Arquitectónico
 Cerrar el ciclo entre extracción documental y recuperación aumentada por generación (Scientific RAG):
 1. **Motor de Chunking Semántico Consciente de `DocumentIR` (`scholarmark/rag/chunker.py`):**
-   - Generar fragmentos autocontenidos (`SemanticChunk`) que respetan la topología del documento: **nunca parten una tabla, ecuación, algoritmo ni lista**.
-   - Inyectar en cada chunk su jerarquía de encabezados (`section_path`: `["2. Methodology", "2.1 Network Architecture"]`), las coordenadas espaciales exactas (`pages`, `bboxes`), las **entradas bibliográficas completas** citadas dentro del fragmento (provenientes de la Prioridad 2) y el **contexto de artefactos referenciados** (si el párrafo menciona *"Table I"*, *"Fig. 2"* o *"Algorithm 1"*, adjunta su resumen estructural / `chart_semantics`).
-2. **CLI `scholarmark chunk` y Flag `--chunks` en `extract`:** Exportar directamente archivos `*.chunks.jsonl` listos para indexación vectorial o híbrida (BM25 + Embeddings).
-3. **Ampliación Multi-Editorial del Gold Benchmark (`bench/gold_suite.py`):** Incorporar patologías de **Biografías de Autores IEEE con foto lateral** y **Contorneo de Figuras (`Wrap-Text`) estilo Nature**, evaluando de extremo a extremo el pipeline `v4.0`.
+   - Generar fragmentos autocontenidos (`SemanticChunk`) que respetan la topología del documento: **nunca parten una tabla, ecuación, algoritmo ni figura**, emitiéndolos como chunks atómicos dedicados.
+   - Inyectar en cada chunk su jerarquía de encabezados (`section_path` / `section_hierarchy`: `["2. Methodology", "2.1 Network Architecture"]`), las coordenadas espaciales exactas (`pages`, `bboxes`), las **entradas bibliográficas completas** citadas dentro del fragmento (provenientes de la Prioridad 2) y el **contexto de artefactos referenciados** (`linked_elements` / `related_figures`, `related_tables`, `related_algorithms`, `related_equations`).
+2. **CLI `scholarmark chunk` y Flag `--chunks` en `single`/`batch`:** Exportar directamente archivos `*.chunks.jsonl` listos para indexación vectorial o híbrida (BM25 + Embeddings).
+3. **Ampliación Multi-Editorial del Gold Benchmark (`bench/gold_suite.py`):** Incorporar **Caso 8 (`case8_ieee_author_bios_and_rag_chunks`)** evaluando de extremo a extremo la separación de biografías de autores IEEE y la calidad de enlace en `SemanticChunker`.
 
-### 3.2. Archivos a Crear o Modificar
+### 3.2. Archivos Creados o Modificados
 | Archivo | Acción | Responsabilidad Técnica |
 | :--- | :--- | :--- |
-| `scholarmark/rag/__init__.py` | **Crear** | Exportar `SemanticChunk`, `SemanticChunker` y `export_chunks_jsonl`. |
-| `scholarmark/rag/chunker.py` | **Crear** | Implementar particionamiento jerárquico sobre `DocumentIR` con ventana de tokens configurable (`max_chars=1800`), preservación de bloques atómicos, resolución de referencias cruzadas (`Table N`, `Fig. N`, `Eq. (N)`, `Algorithm N`) y adjunción de citas bibliográficas. |
-| `scholarmark/config.py` | Modificar | Añadir `export_chunks: bool = False` y `chunk_max_chars: int = 1800` a `ExtractorConfig`. |
-| `scholarmark/extractor.py` | Modificar | Generar `*.chunks.jsonl` automáticamente cuando `config.export_chunks` esté activo. |
-| `scholarmark/cli.py` | Modificar | Añadir flag `--chunks` al comando `extract` y nuevo subcomando `scholarmark chunk`. |
-| `bench/gold_suite.py` | Modificar | Añadir **Caso 8 (`case8_ieee_author_bios_and_rag_chunks`)** para validar separación de biografías de autores IEEE y calidad de enlace en `SemanticChunker`. |
-| `tests/test_priority3_v4_0.py` | **Crear** | Pruebas unitarias de `SemanticChunker` (invarianza atómica de tablas/fórmulas/algoritmos, herencia de `section_path`, enlace de citas y exportación JSONL). |
+| `scholarmark/rag/__init__.py` | **Creado** | Exporta `SemanticChunk`, `SemanticChunker` y `export_chunks_jsonl`. |
+| `scholarmark/rag/chunker.py` | **Creado** | Implementado particionamiento jerárquico sobre `DocumentIR` con ventana configurable (`max_chars=1800`), chunks atómicos (`table`, `figure`, `algorithm`, `formula`), resolución cruzada 4D (`Table N`, `Fig. N`, `Eq. (N)`, `Algorithm N`), hidratación $O(1)$ de citas y aislamiento de `["Author Biographies"]`. |
+| `scholarmark/layout/detector.py` | Modificado | Priorización de `author_bio` antes de `footnote` en el tercio inferior de página (fuente 8–8.5pt IEEE) y exclusión de encabezados numerados en la heurística de `title` de página 1. |
+| `scholarmark/config.py` | Modificado | Añadidos `export_chunks: bool = False` y `chunk_max_chars: int = 1800` a `ExtractorConfig`. |
+| `scholarmark/extractor.py` | Modificado | Generación automática de `*.chunks.jsonl` cuando `config.export_chunks` está activo. |
+| `scholarmark/cli.py` | Modificado | Añadido flag `--chunks` a `batch`/`single` y nuevo subcomando `scholarmark chunk`. |
+| `bench/gold_suite.py` | Modificado | Añadido **Caso 8 (`case8_ieee_author_bios_and_rag_chunks`)** con score `1.0000` (`VisionEngine`). |
+| `tests/test_priority3_v4_0.py` | **Creado** | Pruebas unitarias y end-to-end de `SemanticChunker` y exportación JSONL. |
 
 ### 3.3. Criterios de Aceptación (Prioridad 3)
-- [ ] Ninguna tabla, ecuación ni algoritmo es fragmentado a mitad por el `SemanticChunker`.
-- [ ] Cada chunk exportado en `*.chunks.jsonl` incluye `chunk_id`, `section_path`, `text`, `pages`, `bboxes`, `cited_references` y `linked_elements`.
-- [ ] El Gold Benchmark completo (8 escenarios) alcanza un score compuesto $\ge 0.98$ con `VisionEngine`.
-- [ ] Commit atómico: `feat(v4.0): add DocumentIR-aware SemanticChunker, JSONL export, and multi-publisher benchmark suite`.
+- [x] Ninguna tabla, ecuación ni algoritmo es fragmentado a mitad por el `SemanticChunker`.
+- [x] Cada chunk exportado en `*.chunks.jsonl` incluye `chunk_id`, `chunk_type`, `section_path`, `text`, `pages`, `bboxes`, `metrics`, `cited_references` y `linked_elements`.
+- [x] El Gold Benchmark completo (8 escenarios) alcanza un score compuesto de **0.9919** ($\ge 0.98$) con `VisionEngine`.
+- [x] Commit atómico: `41ac8fb` (`feat(v4.0): add DocumentIR-aware SemanticChunker, JSONL export, and multi-publisher benchmark suite`).
 
-### 3.4. Compuerta Final (`Gate 3` — Cierre del Ciclo)
-> *[Se completará al finalizar la Prioridad 3 con la tabla comparativa final `v2.1` vs `v3.0` vs `v4.0` y el tag de versión]*
+### 3.4. Compuerta Final (`Gate 3` — Cierre del Ciclo y Auditoría Comparativa `v2.1` $\rightarrow$ `v3.0` $\rightarrow$ `v4.0`)
+
+#### Hallazgos de Cierre durante la Validación de Prioridad 3
+Durante la ejecución de `case8_ieee_author_bios_and_rag_chunks`, la auditoría del `LayoutDetector` reveló dos interacciones geométricas sutiles que fueron corregidas en `scholarmark/layout/detector.py`:
+1. **Desambiguación `author_bio` vs. `footnote` en pie de página IEEE:** Las biografías al final de artículos IEEE emplean cuerpo tipográfico reducido (`8.0–8.5 pt`) y se ubican a menudo en `y0 > 0.72 * page_h`. Al evaluar la regla `author_bio` (`_BIO_CUE_RE` o retrato lateral) antes de la regla `footnote`, el detector clasifica con 100% de precisión las biografías sin confundirlas con notas al pie.
+2. **Protección de secciones numeradas en primera página:** Si una página se inicia directamente con un encabezado numerado en fuente grande (`5. Ablation Study`, `12 pt`), la regla `title` ahora verifica `not _HEADING_PREFIX_RE.match(clean_single)` para preservarlo como `section_header`.
+
+#### Tabla Comparativa Final del Gold Benchmark (8 Escenarios SOTA)
+
+| Caso | Dimensión Auditada | `v2.1 / fast` | `v3.0` | `v4.0 (Final)` | $\Delta$ Total (`v4.0` vs `fast`) |
+| :--- | :--- | :---: | :---: | :---: | :---: |
+| `case1_two_col_footnotes` | Orden de Lectura (Kendall-$\tau$) | 0.9048 | 1.0000 | **1.0000** | **+0.0952** |
+| `case2_2d_math` | Fidelidad Matemática 2D ($1 - \text{NED}$) | 0.0938 | 0.9355 | **0.9355** | **+0.8417** |
+| `case3_booktabs_colspan` | Tablas Jerárquicas (`TEDS`) | 0.4500 | 1.0000 | **1.0000** | **+0.5500** |
+| `case4_multipanel_1n` | Leyendas Multipanel 1:N (`F1`) | 0.5000 | 1.0000 | **1.0000** | **+0.5000** |
+| `case5_dense_scatter_guard` | Guardián Vectorial ($<2.5\text{ s}$) | 1.0000 | 1.0000 | **1.0000** | **+0.0000** |
+| `case6_algorithm_pseudocode` | Sangría de Algoritmos (`v3.1`) | 0.2500 | — | **1.0000** | **+0.7500** |
+| `case7_citations_and_chart_semantics` | Grafo de Citas y Gráficos (`v3.2`) | 0.0000 | — | **1.0000** | **+1.0000** |
+| `case8_ieee_author_bios_and_rag_chunks` | Chunks Semánticos RAG y Bio Guard (`v4.0`) | 0.1667 | — | **1.0000** | **+0.8333** |
+| **PROMEDIO GLOBAL** | **Composite Gold Score (8 Casos)** | **0.4207** | **0.9871*** | **0.9919** | **+0.5713** |
+
+*\*Nota: El promedio de `v3.0` (`0.9871`) corresponde a los 5 casos base iniciales; `v4.0` alcanza **0.9919** sobre los 8 escenarios completos con **44/44 pruebas unitarias aprobadas**.*
+
