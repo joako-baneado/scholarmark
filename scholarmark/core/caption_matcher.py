@@ -1,11 +1,12 @@
 """
-Caption matching and spatial correlation engine for ScholarMark.
-Associates figures with their respective captions using the Hungarian algorithm
-and spatial proximity penalties across single- and multi-column layouts.
+Caption matching and spatial correlation engine for ScholarMark v3.0.
+Associates figures (including multi-panel subfigures 1:N) and tables with their
+respective captions using a flexible bipartite graph solver with column, intervening-text,
+and lexical subpanel affinity scoring.
 """
 
 import re
-from typing import List, Tuple, Optional
+from typing import List, Tuple, Optional, Dict
 import fitz
 import numpy as np
 
@@ -13,51 +14,128 @@ from .geometry import BoundingBox, VisualElement
 
 # Expresión regular multilingüe para títulos de figuras y diagramas científicos
 CAPTION_REGEX = re.compile(
-    r"^(Fig(\.|ure)?|FIG(\.|URE)?|Figura|Figur|Abbildung)\s+([0-9]+|[A-Z])(\.[0-9]+)?(\s*[:\.\-—]|\s*\([a-z]\))",
+    r"^(Fig(\.|ure)?|FIG(\.|URE)?|Figura|Figur|Abbildung)\s+([0-9]+|[A-Z]|[I VX]+)(\.[0-9]+)?(\s*[:\.\-—]|\s*\([a-z]\))",
     re.IGNORECASE
 )
 
-# Expresión regular para tablas (para evitar asociar epígrafes de tablas a figuras)
+# Expresión regular para tablas
 TABLE_CAPTION_REGEX = re.compile(
-    r"^(Table|TABLE|Tabla|Tabell|Tabelle)\s+([0-9]+|[A-Z])",
+    r"^(Table|TABLE|Tabla|Tabell|Tabelle)\s+([0-9]+|[A-Z]|[IVX]+)(\.[0-9]+)?(\s*[:\.\-—]|\s+)",
     re.IGNORECASE
 )
+
+# Indicadores de que una leyenda describe múltiples subpaneles (a), (b), left/right, etc.
+MULTIPANEL_CAPTION_REGEX = re.compile(
+    r"(\([a-zA-Z]\)\s*.*?\([b-zB-Z]\)|\[[a-zA-Z]\]\s*.*?\[[b-zB-Z]\]|"
+    r"\b(?:left|right|top|bottom|upper|lower)\s+panel\b)",
+    re.IGNORECASE | re.DOTALL
+)
+
+SUBPANEL_TAG_REGEX = re.compile(r"(\([a-zA-Z]\)|\[[a-zA-Z]\])")
 
 
 def extract_captions_from_page(page: fitz.Page) -> List[Tuple[BoundingBox, str]]:
     """
-    Detecta bloques de texto en la página que inician con sintaxis de leyendas científicas.
+    Detecta bloques de texto en la página que inician con sintaxis de leyendas de figuras.
     Retorna pares de (BoundingBox, texto_leyenda).
     """
-    captions = []
+    captions: List[Tuple[BoundingBox, str]] = []
     blocks = page.get_text("blocks")  # [x0, y0, x1, y1, text, block_no, block_type]
 
     for b in blocks:
-        if b[6] != 0:  # Ignorar bloques no textuales
+        if b[6] != 0:
             continue
         text = b[4].strip()
         if not text:
             continue
 
-        # Si coincide con patrón de figura y NO es una tabla
         if CAPTION_REGEX.search(text) and not TABLE_CAPTION_REGEX.search(text):
             box = BoundingBox(x0=float(b[0]), y0=float(b[1]), x1=float(b[2]), y1=float(b[3]))
-            # Normalizar saltos de línea internos en un párrafo continuo
             clean_text = " ".join(text.split())
             captions.append((box, clean_text))
 
     return captions
 
 
+def extract_table_captions_from_page(page: fitz.Page) -> List[Tuple[BoundingBox, str]]:
+    """
+    Detecta bloques de texto en la página que inician con sintaxis de leyendas de tablas.
+    Retorna pares de (BoundingBox, texto_leyenda).
+    """
+    captions: List[Tuple[BoundingBox, str]] = []
+    blocks = page.get_text("blocks")
+
+    for b in blocks:
+        if b[6] != 0:
+            continue
+        text = b[4].strip()
+        if not text:
+            continue
+
+        if TABLE_CAPTION_REGEX.search(text):
+            box = BoundingBox(x0=float(b[0]), y0=float(b[1]), x1=float(b[2]), y1=float(b[3]))
+            clean_text = " ".join(text.split())
+            captions.append((box, clean_text))
+
+    return captions
+
+
+def _has_intervening_block(
+    upper_box: BoundingBox,
+    lower_box: BoundingBox,
+    obstacles: List[BoundingBox]
+) -> bool:
+    """
+    Determina si existe un bloque obstáculo (prosa u otra leyenda/figura) situado
+    verticalmente entre upper_box y lower_box con solapamiento horizontal significativo.
+    """
+    y_top = min(upper_box.y1, lower_box.y1)
+    y_bot = max(upper_box.y0, lower_box.y0)
+    if y_bot - y_top <= 4.0:
+        return False
+
+    x_left = min(upper_box.x0, lower_box.x0)
+    x_right = max(upper_box.x1, lower_box.x1)
+
+    for obs in obstacles:
+        if obs is upper_box or obs is lower_box:
+            continue
+        # Verificar si el centro vertical del obstáculo cae estrictamente entre ambos
+        obs_cy = (obs.y0 + obs.y1) * 0.5
+        if (y_top + 2.0) < obs_cy < (y_bot - 2.0):
+            # Y además se solapa horizontalmente con el corredor entre figura y leyenda
+            overlap_x = min(x_right, obs.x1) - max(x_left, obs.x0)
+            if overlap_x > 20.0:
+                return True
+    return False
+
+
+def _caption_capacity(cap_text: str) -> int:
+    """
+    Calcula cuántos subpaneles puede absorber una leyenda:
+    - 1 por defecto para leyendas simples.
+    - N >= 2 si la leyenda enumera explícitamente (a), (b), (c)... o paneles compuestos.
+    """
+    tags = {t.lower() for t in SUBPANEL_TAG_REGEX.findall(cap_text)}
+    if len(tags) >= 2:
+        return max(len(tags), 4)
+    if MULTIPANEL_CAPTION_REGEX.search(cap_text):
+        return 4
+    return 1
+
+
 def match_figures_to_captions(
     figures: List[VisualElement],
     captions: List[Tuple[BoundingBox, str]],
-    page_width: float
+    page_width: float,
+    prose_blocks: Optional[List[BoundingBox]] = None,
+    allow_many_to_one: bool = True
 ) -> None:
     """
-    Asigna de forma determinista y biyectiva cada figura a su respectivo pie de página (caption).
-    Utiliza una matriz de coste espacial con penalizaciones por desplazamiento vertical,
-    horizontal y división de columnas, resuelta mediante el Algoritmo Húngaro.
+    Asigna cada figura o subpanel a su respectiva leyenda mediante un grafo bipartito 1:N.
+    - Soporta leyendas consolidadas que describen múltiples subpaneles (a), (b), (c).
+    - Penaliza columnas cruzadas y bloques de prosa intermedios.
+    - Cuando la relación es 1:1, preserva la optimalidad global del Algoritmo Húngaro.
     """
     if not figures or not captions:
         return
@@ -66,60 +144,226 @@ def match_figures_to_captions(
     num_caps = len(captions)
     cost_matrix = np.zeros((num_figs, num_caps), dtype=np.float64)
 
-    is_multi_col = page_width > 500  # Páginas estándar típicamente ~595 o 612 pt
+    is_multi_col = page_width > 500.0
     col_mid = page_width / 2.0
+    all_cap_boxes = [c[0] for c in captions]
+    obstacles = list(prose_blocks or []) + all_cap_boxes
+
+    capacities: List[int] = []
+    for j, (cap_box, cap_text) in enumerate(captions):
+        cap_k = _caption_capacity(cap_text) if allow_many_to_one else 1
+        # Si una leyenda es de ancho completo o hay más figuras que leyendas alineadas encima,
+        # permitir capacidad extendida para subfiguras en fila/rejilla
+        if allow_many_to_one and num_figs > num_caps and cap_k == 1:
+            aligned_above = sum(
+                1 for f in figures
+                if 0.0 <= (cap_box.y0 - f.bbox.y1) <= 160.0
+                and not _has_intervening_block(f.bbox, cap_box, all_cap_boxes)
+            )
+            if aligned_above >= 2:
+                cap_k = aligned_above
+        capacities.append(cap_k)
 
     for i, fig in enumerate(figures):
         f_box = fig.bbox
         f_center_x = (f_box.x0 + f_box.x1) / 2.0
         f_is_wide = f_box.width > (page_width * 0.65)
+        fig_tags = {t.lower() for t in getattr(fig, "subpanel_labels", [])}
+
+        for j, (cap_box, cap_text) in enumerate(captions):
+            c_center_x = (cap_box.x0 + cap_box.x1) / 2.0
+            c_is_wide = cap_box.width > (page_width * 0.60) or capacities[j] > 1
+
+            # 1. Distancia vertical: el pie de figura comúnmente está DEBAJO de la figura
+            v_dist = cap_box.y0 - f_box.y1
+            if v_dist >= -6.0:
+                v_cost = max(0.0, v_dist) * 1.0
+            else:
+                v_cost = abs(v_dist) * 4.5
+
+            # 2. Distancia horizontal: si la leyenda es multipanel/ancha y cubre el rango X de la figura,
+            # reducir el coste horizontal para no penalizar subpaneles laterales (a) a la izq y (c) a la der
+            if c_is_wide and (cap_box.x0 - 40.0) <= f_center_x <= (cap_box.x1 + 40.0):
+                h_cost = abs(c_center_x - f_center_x) * 0.25
+            else:
+                h_cost = abs(c_center_x - f_center_x) * 1.2
+
+            # 3. Penalización de columna
+            col_penalty = 0.0
+            if is_multi_col and not f_is_wide and not c_is_wide:
+                fig_col = 0 if f_center_x < col_mid else 1
+                cap_col = 0 if c_center_x < col_mid else 1
+                if fig_col != cap_col:
+                    col_penalty = 400.0
+
+            # 4. Penalización por bloque de texto u otra leyenda interpuesta entre la figura y esta leyenda
+            intervening_penalty = 0.0
+            if _has_intervening_block(f_box, cap_box, obstacles):
+                intervening_penalty = 550.0
+
+            # 5. Bonificación léxica y por coincidencia de subpaneles (a), (b)
+            regex_bonus = -60.0 if CAPTION_REGEX.search(cap_text) else 0.0
+            cap_tags = {t.lower() for t in SUBPANEL_TAG_REGEX.findall(cap_text)}
+            subpanel_bonus = -100.0 if (fig_tags and (fig_tags & cap_tags)) else 0.0
+
+            cost_matrix[i, j] = (
+                v_cost + h_cost + col_penalty + intervening_penalty + regex_bonus + subpanel_bonus
+            )
+
+    # Resolver asignación con capacidades 1:N replicando columnas según capacidad de cada leyenda
+    expanded_cols: List[int] = []
+    for j, cap_k in enumerate(capacities):
+        expanded_cols.extend([j] * max(1, cap_k))
+
+    expanded_cost = cost_matrix[:, expanded_cols]
+
+    assigned_pairs: List[Tuple[int, int]] = []
+    try:
+        from scipy.optimize import linear_sum_assignment
+        row_ind, exp_col_ind = linear_sum_assignment(expanded_cost)
+        for r, ec in zip(row_ind, exp_col_ind):
+            orig_c = expanded_cols[ec]
+            if cost_matrix[r, orig_c] < 650.0:
+                assigned_pairs.append((int(r), int(orig_c)))
+    except ImportError:
+        cap_counts = {j: 0 for j in range(num_caps)}
+        for i in range(num_figs):
+            best_j = None
+            min_c = float("inf")
+            for j in range(num_caps):
+                if cap_counts[j] < capacities[j] and cost_matrix[i, j] < min_c:
+                    min_c = cost_matrix[i, j]
+                    best_j = j
+            if best_j is not None and min_c < 650.0:
+                assigned_pairs.append((i, best_j))
+                cap_counts[best_j] += 1
+
+    # Contabilizar cuántos paneles se asignaron a cada leyenda para etiquetar grupos compuestos
+    group_members: Dict[int, List[int]] = {}
+    for fig_idx, cap_idx in assigned_pairs:
+        figures[fig_idx].caption_text = captions[cap_idx][1]
+        group_members.setdefault(cap_idx, []).append(fig_idx)
+
+    for cap_idx, member_indices in group_members.items():
+        if len(member_indices) > 1:
+            group_id = f"composite_p{figures[member_indices[0]].page_num}_c{cap_idx + 1}"
+            for fi in member_indices:
+                figures[fi].composite_group_id = group_id
+
+
+def merge_composite_subfigures(
+    figures: List[VisualElement],
+    max_gap: float = 48.0,
+    page_rect: Optional[fitz.Rect] = None
+) -> List[VisualElement]:
+    """
+    Consolida múltiples subpaneles (VisualElement) que comparten el mismo composite_group_id
+    y están próximos espacialmente en un único VisualElement envolvente con su leyenda compartida.
+    """
+    if len(figures) <= 1:
+        return figures
+
+    grouped: Dict[str, List[VisualElement]] = {}
+    standalone: List[VisualElement] = []
+
+    for fig in figures:
+        if fig.composite_group_id:
+            grouped.setdefault(fig.composite_group_id, []).append(fig)
+        else:
+            standalone.append(fig)
+
+    merged_list: List[VisualElement] = list(standalone)
+    for group_id, members in grouped.items():
+        if len(members) == 1:
+            merged_list.append(members[0])
+            continue
+
+        # Verificar que el conjunto no abarque páginas distintas
+        union_box = members[0].bbox
+        all_labels: List[str] = list(members[0].subpanel_labels)
+        for m in members[1:]:
+            union_box = union_box.union(m.bbox)
+            for lbl in m.subpanel_labels:
+                if lbl not in all_labels:
+                    all_labels.append(lbl)
+
+        if page_rect is not None:
+            union_box = union_box.pad(0.0, page_rect)
+
+        merged_list.append(VisualElement(
+            bbox=union_box,
+            category=members[0].category,
+            confidence=min(m.confidence for m in members),
+            caption_text=members[0].caption_text,
+            page_num=members[0].page_num,
+            is_vector=any(m.is_vector for m in members),
+            subpanel_labels=all_labels,
+            composite_group_id=group_id,
+        ))
+
+    merged_list.sort(key=lambda el: (el.page_num, round(el.bbox.y0, 1), round(el.bbox.x0, 1)))
+    return merged_list
+
+
+def match_tables_to_captions(
+    tables: List[VisualElement],
+    captions: List[Tuple[BoundingBox, str]],
+    page_width: float
+) -> None:
+    """
+    Asigna cada tabla detectada a su respectivo título ('Table I: ...').
+    En publicaciones científicas (IEEE/Elsevier/Springer), los títulos de tabla suelen
+    ubicarse ENCIMA de la tabla, aunque también se soporta ubicación inferior.
+    """
+    if not tables or not captions:
+        return
+
+    num_tabs = len(tables)
+    num_caps = len(captions)
+    cost_matrix = np.zeros((num_tabs, num_caps), dtype=np.float64)
+
+    is_multi_col = page_width > 500.0
+    col_mid = page_width / 2.0
+
+    for i, tab in enumerate(tables):
+        t_box = tab.bbox
+        t_center_x = (t_box.x0 + t_box.x1) / 2.0
+        t_is_wide = t_box.width > (page_width * 0.65)
 
         for j, (cap_box, cap_text) in enumerate(captions):
             c_center_x = (cap_box.x0 + cap_box.x1) / 2.0
 
-            # 1. Distancia vertical: el pie de foto comúnmente está DEBAJO de la figura
-            v_dist = cap_box.y0 - f_box.y1
-            if v_dist >= 0:
-                # Distancia directa hacia abajo
-                v_cost = v_dist * 1.0
+            # Distancia vertical: preferir leyenda inmediatamente ENCIMA de la tabla
+            dist_above = t_box.y0 - cap_box.y1
+            dist_below = cap_box.y0 - t_box.y1
+            if dist_above >= -6.0:
+                v_cost = max(0.0, dist_above) * 1.0
+            elif dist_below >= -6.0:
+                v_cost = max(0.0, dist_below) * 1.4
             else:
-                # Penalización severa si la leyenda se ubica encima de la imagen
-                v_cost = abs(v_dist) * 4.5
+                v_cost = min(abs(dist_above), abs(dist_below)) * 4.0
 
-            # 2. Distancia horizontal entre centroides
-            h_cost = abs(c_center_x - f_center_x) * 1.2
-
-            # 3. Penalización de columna: si están en columnas opuestas y la figura no es de ancho completo
+            h_cost = abs(c_center_x - t_center_x) * 1.0
             col_penalty = 0.0
-            if is_multi_col and not f_is_wide:
-                fig_col = 0 if f_center_x < col_mid else 1
+            if is_multi_col and not t_is_wide:
+                tab_col = 0 if t_center_x < col_mid else 1
                 cap_col = 0 if c_center_x < col_mid else 1
-                if fig_col != cap_col:
-                    col_penalty = 400.0  # Fuerte barrera entre columnas adyacentes
+                if tab_col != cap_col:
+                    col_penalty = 400.0
 
-            # 4. Bonificación léxica si la leyenda inicia explícitamente con Fig/Figure
-            regex_bonus = -60.0 if CAPTION_REGEX.search(cap_text) else 0.0
-
+            regex_bonus = -60.0 if TABLE_CAPTION_REGEX.search(cap_text) else 0.0
             cost_matrix[i, j] = v_cost + h_cost + col_penalty + regex_bonus
 
-    # Intentar resolver mediante SciPy (Algoritmo Húngaro O(N^3))
     try:
         from scipy.optimize import linear_sum_assignment
         row_ind, col_ind = linear_sum_assignment(cost_matrix)
         for r, c in zip(row_ind, col_ind):
-            # Asignar solo si el coste no es absurdamente alto (p. ej. otra columna sin relación)
-            if cost_matrix[r, c] < 800.0:
-                figures[r].caption_text = captions[c][1]
+            if cost_matrix[r, c] < 700.0:
+                tables[r].caption_text = captions[c][1]
     except ImportError:
-        # Fallback Greedy si SciPy no estuviera disponible en el entorno
-        assigned_caps = set()
-        for i in range(num_figs):
-            best_j = None
-            min_c = float('inf')
-            for j in range(num_caps):
-                if j not in assigned_caps and cost_matrix[i, j] < min_c:
-                    min_c = cost_matrix[i, j]
-                    best_j = j
-            if best_j is not None and min_c < 800.0:
-                figures[i].caption_text = captions[best_j][1]
-                assigned_caps.add(best_j)
+        assigned = set()
+        for i in range(num_tabs):
+            best_j = int(np.argmin(cost_matrix[i]))
+            if best_j not in assigned and cost_matrix[i, best_j] < 700.0:
+                tables[i].caption_text = captions[best_j][1]
+                assigned.add(best_j)
