@@ -47,7 +47,7 @@ scratch/
 *.log
 .pytest_cache/
 .scholarmark/
-models/
+/models/
 *.onnx
 bench/results/*.json
 bench/results/overlays/

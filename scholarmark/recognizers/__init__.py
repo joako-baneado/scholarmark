@@ -1,8 +1,26 @@
 """
-Specialized 2D Formula and Hierarchical Table Recognizers for ScholarMark v3.0.
+Specialized 2D Formula, Hierarchical Table, and Algorithm Recognizers for ScholarMark v3.1.
 """
 
-from .formula import FormulaRecognizer, MathSpanToken, validate_katex_syntax
+from .algorithm import AlgorithmRecognizer, AlgorithmResult, AlgorithmLine, ALGORITHM_HEADER_RE
+from .formula import (
+    FormulaRecognizer,
+    MathSpanToken,
+    validate_katex_syntax,
+    has_corrupted_glyphs,
+    sanitize_pua_text,
+)
 from .table import TableRecognizer
 
-__all__ = ["FormulaRecognizer", "MathSpanToken", "validate_katex_syntax", "TableRecognizer"]
+__all__ = [
+    "AlgorithmRecognizer",
+    "AlgorithmResult",
+    "AlgorithmLine",
+    "ALGORITHM_HEADER_RE",
+    "FormulaRecognizer",
+    "MathSpanToken",
+    "validate_katex_syntax",
+    "has_corrupted_glyphs",
+    "sanitize_pua_text",
+    "TableRecognizer",
+]

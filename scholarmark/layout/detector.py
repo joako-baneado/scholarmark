@@ -25,6 +25,7 @@ from ..core.geometry import (
     expand_figure_bbox,
 )
 from ..models.registry import resolve_ort_providers
+from ..recognizers.algorithm import AlgorithmRecognizer, ALGORITHM_HEADER_RE
 
 
 _HEADING_PREFIX_RE = re.compile(
@@ -231,8 +232,42 @@ class LayoutDetector:
                     u = u.union(ab)
                 if u.height >= 20.0 and u.width <= page_w and u.height <= page_h:
                     table_boxes.append(u)
+            else:
+                # 4. Rescate de tablas ráster (imagen incrustada inmediatamente debajo de Table X:)
+                try:
+                    for img in page.get_images():
+                        xref = img[0]
+                        for r in page.get_image_rects(xref):
+                            ib = BoundingBox.from_fitz_rect(r)
+                            if (
+                                ib.width >= 60.0
+                                and ib.height >= 30.0
+                                and -5.0 <= (ib.y0 - tc.y1) <= 45.0
+                                and not (ib.x1 < tc.x0 - 20.0 or ib.x0 > tc.x1 + 20.0)
+                            ):
+                                table_boxes.append(ib)
+                except Exception:
+                    pass
 
         return table_boxes
+
+    @staticmethod
+    def _is_pseudocode_continuation(text: str) -> bool:
+        """Determina si un bloque corto es una línea o continuación de un algoritmo."""
+        s = " ".join(text.split()).strip()
+        if not s or len(s) > 260:
+            return False
+        if re.match(
+            r"^(?:\[?\d{1,3}\]?[:.)]\s*|Require\s*:|Ensure\s*:|Input\s*:|Output\s*:|"
+            r"for\b|parfor\b|while\b|if\b|else\b|elsif\b|elif\b|repeat\b|until\b|"
+            r"end(?:\s+(?:for|while|if))?\b|return\b)",
+            s,
+            re.IGNORECASE,
+        ):
+            return True
+        if ("<-" in s or "←" in s) and len(s.split()) <= 18:
+            return True
+        return False
 
     def detect_page(
         self,
@@ -291,8 +326,43 @@ class LayoutDetector:
             elif CAPTION_REGEX.search(clean_single):
                 figure_caption_boxes.append(bb)
 
-        # Detectar regiones de tablas
-        table_boxes = self._detect_table_regions(page, rules, table_caption_boxes, raw_blocks)
+        # Detectar bloques de Algoritmos y Pseudocódigo antes de tablas (evita confusión con reglas horizontales)
+        algorithm_boxes: List[BoundingBox] = []
+        consumed_by_algorithm: set[int] = set()
+        idx_b = 0
+        while idx_b < len(prelim_text_blocks):
+            if idx_b in consumed_by_algorithm:
+                idx_b += 1
+                continue
+            bb_cur, txt_cur, _, _ = prelim_text_blocks[idx_b]
+            first_line = txt_cur.splitlines()[0].strip() if txt_cur else ""
+            if ALGORITHM_HEADER_RE.match(first_line) or AlgorithmRecognizer.is_algorithm_text(txt_cur):
+                union_algo = bb_cur
+                consumed_by_algorithm.add(idx_b)
+                j_next = idx_b + 1
+                while j_next < len(prelim_text_blocks):
+                    bb_nxt, txt_nxt, _, _ = prelim_text_blocks[j_next]
+                    v_gap = bb_nxt.y0 - union_algo.y1
+                    horiz_aligned = not (bb_nxt.x1 < union_algo.x0 - 15.0 or bb_nxt.x0 > union_algo.x1 + 140.0)
+                    if -4.0 <= v_gap <= 28.0 and horiz_aligned and self._is_pseudocode_continuation(txt_nxt):
+                        union_algo = union_algo.union(bb_nxt)
+                        consumed_by_algorithm.add(j_next)
+                        j_next += 1
+                    else:
+                        break
+                algo_box = union_algo.pad(2.0, page.rect)
+                algorithm_boxes.append(algo_box)
+                regions.append(LayoutRegion(kind="algorithm", bbox=algo_box, confidence=0.95, source="model"))
+                idx_b = j_next
+            else:
+                idx_b += 1
+
+        # Detectar regiones de tablas (excluyendo cajas de algoritmos que usan filetes horizontales)
+        raw_table_boxes = self._detect_table_regions(page, rules, table_caption_boxes, raw_blocks)
+        table_boxes = [
+            tb for tb in raw_table_boxes
+            if not any(tb.iou(ab) > 0.25 or ab.coverage_by(tb) > 0.45 for ab in algorithm_boxes)
+        ]
         for tb in table_boxes:
             regions.append(LayoutRegion(kind="table", bbox=tb, confidence=0.92, source="model"))
 
@@ -304,7 +374,7 @@ class LayoutDetector:
                 for r in page.get_image_rects(xref):
                     ib = BoundingBox.from_fitz_rect(r)
                     if ib.width >= 35.0 and ib.height >= 35.0:
-                        if not any(ib.iou(tb) > 0.5 for tb in table_boxes):
+                        if not any(ib.iou(tb) > 0.4 or ib.coverage_by(tb) > 0.6 for tb in table_boxes):
                             figure_boxes.append(ib)
         except Exception:
             pass
@@ -361,6 +431,8 @@ class LayoutDetector:
         # Fusionar bandas de ecuaciones 2D fragmentadas (ej. numerador, denominador y tag '(1)' en bloques separados)
         consumed_by_formula: set[int] = set()
         for idx_tag, (bb_tag, txt_tag, _, _) in enumerate(prelim_text_blocks):
+            if idx_tag in consumed_by_algorithm:
+                continue
             clean_tag = " ".join(txt_tag.split()).strip()
             m_tag = re.fullmatch(r"\(\s*(\d+[a-zA-Z]?)\s*\)", clean_tag)
             if not m_tag:
@@ -371,7 +443,7 @@ class LayoutDetector:
             band_members = [idx_tag]
             union_eq = bb_tag
             for idx_other, (bb_o, txt_o, _, _) in enumerate(prelim_text_blocks):
-                if idx_other == idx_tag:
+                if idx_other == idx_tag or idx_other in consumed_by_algorithm:
                     continue
                 cy_o = (bb_o.y0 + bb_o.y1) * 0.5
                 if band_y0 <= cy_o <= band_y1 and len(txt_o.strip()) < 120:
@@ -387,12 +459,12 @@ class LayoutDetector:
                     metadata={"tag": eq_num},
                 ))
 
-        # Clasificar los bloques textuales que no caen dentro de tablas, figuras ni bandas de ecuación
+        # Clasificar los bloques textuales que no caen dentro de tablas, figuras, algoritmos ni bandas de ecuación
         for b_idx, (bb, text, spans, max_sz) in enumerate(prelim_text_blocks):
-            if b_idx in consumed_by_formula:
+            if b_idx in consumed_by_formula or b_idx in consumed_by_algorithm:
                 continue
-            # Si ya está absorbido por una tabla detectada, lo manejará TableRecognizer
-            if any(bb.coverage_by(tb) > 0.65 for tb in table_boxes):
+            # Si ya está absorbido por una tabla o algoritmo detectado, lo manejará su reconocedor
+            if any(bb.coverage_by(tb) > 0.65 for tb in table_boxes) or any(bb.coverage_by(ab) > 0.65 for ab in algorithm_boxes):
                 continue
 
             clean_single = " ".join(text.split())

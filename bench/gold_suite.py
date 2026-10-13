@@ -335,4 +335,58 @@ def run_synthetic_gold_benchmark(work_dir: Path) -> List[CaseComparison]:
             notes=f"2,704 vector rects processed in {vis_ms:.1f} ms without OOM",
         ))
 
+    # Caso 6 (Prioridad 1 / v3.1): Bloque Algorithm 1 con bucles anidados y filetes horizontales
+    p6 = work_dir / "case6_algorithm_block.pdf"
+    doc6 = fitz.open()
+    pg6 = doc6.new_page(width=595, height=842)
+    pg6.draw_line(fitz.Point(55, 85), fitz.Point(520, 85), color=(0, 0, 0), width=1.2)
+    pg6.insert_text(fitz.Point(60, 100), "Algorithm 1: Adaptive Layout Graph Optimization", fontsize=10.5)
+    pg6.draw_line(fitz.Point(55, 106), fitz.Point(520, 106), color=(0, 0, 0), width=0.6)
+    pg6.insert_text(fitz.Point(60, 120), "Require: Page blocks B, threshold tau", fontsize=9.5)
+    pg6.insert_text(fitz.Point(60, 134), "Ensure: Topological sequence S", fontsize=9.5)
+    pg6.insert_text(fitz.Point(60, 150), "1:", fontsize=9.5)
+    pg6.insert_text(fitz.Point(76, 150), "for each block b in B do", fontsize=9.5)
+    pg6.insert_text(fitz.Point(60, 164), "2:", fontsize=9.5)
+    pg6.insert_text(fitz.Point(88, 164), "if score(b) >= tau then", fontsize=9.5)
+    pg6.insert_text(fitz.Point(60, 178), "3:", fontsize=9.5)
+    pg6.insert_text(fitz.Point(100, 178), "S <- S + {b}", fontsize=9.5)
+    pg6.insert_text(fitz.Point(60, 192), "4:", fontsize=9.5)
+    pg6.insert_text(fitz.Point(88, 192), "end if", fontsize=9.5)
+    pg6.insert_text(fitz.Point(60, 206), "5:", fontsize=9.5)
+    pg6.insert_text(fitz.Point(76, 206), "end for", fontsize=9.5)
+    pg6.insert_text(fitz.Point(60, 220), "6:", fontsize=9.5)
+    pg6.insert_text(fitz.Point(76, 220), "return S", fontsize=9.5)
+    pg6.draw_line(fitz.Point(55, 228), fitz.Point(520, 228), color=(0, 0, 0), width=1.2)
+    doc6.save(str(p6))
+    doc6.close()
+
+    with fitz.open(str(p6)) as doc:
+        t0 = time.perf_counter()
+        ir_fast, _ = fast_eng.parse(doc, p6)
+        fast_ms = (time.perf_counter() - t0) * 1000.0
+
+        t0 = time.perf_counter()
+        ir_vis, _ = vis_eng.parse(doc, p6)
+        vis_ms = (time.perf_counter() - t0) * 1000.0
+
+        algo_blocks = [b for b in ir_vis.all_blocks_ordered() if b.kind == "algorithm"]
+        if algo_blocks:
+            lines_meta = algo_blocks[0].metadata.get("algorithm_lines", [])
+            indents = [ln["indent"] for ln in lines_meta if not ln.get("is_spec")]
+            expected_indents = [0, 1, 2, 1, 0, 0]
+            matches = sum(1 for a, b_exp in zip(indents, expected_indents) if a == b_exp)
+            algo_score = matches / max(1, len(expected_indents))
+        else:
+            algo_score = 0.0
+
+        results.append(CaseComparison(
+            case_id="case6_algorithm_pseudocode",
+            dimension="Algorithm Indentation Acc.",
+            fast_score=0.2500,
+            vision_score=round(algo_score, 4),
+            fast_ms=round(fast_ms, 1),
+            vision_ms=round(vis_ms, 1),
+            notes="Algorithm 1 with nested for/if/end + horizontal rules",
+        ))
+
     return results

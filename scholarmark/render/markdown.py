@@ -111,6 +111,12 @@ def render_markdown(ir: DocumentIR, config: ExtractorConfig, paper_stem: str, pd
             if b.text.strip():
                 chunks.append(f"*{_format_inline_text(b.text.strip(), config.math_to_latex)}*")
 
+        elif b.kind == "algorithm":
+            if b.gfm and b.gfm.strip():
+                chunks.append(b.gfm.strip())
+            elif b.text and b.text.strip():
+                chunks.append(f"```text\n{b.text.strip()}\n```")
+
         elif b.kind == "list":
             txt = _format_inline_text(b.text.strip(), config.math_to_latex)
             if txt:
