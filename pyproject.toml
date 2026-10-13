@@ -4,16 +4,16 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "scholarmark"
-version = "2.1.0"
-description = "High-precision scientific PDF to Markdown converter with LaTeX math, table recovery, figure extraction, and RAG grounding manifest."
+version = "3.0.0"
+description = "High-precision scientific PDF to Markdown & Canonical JSON extractor with pluggable vision engines, 2D LaTeX math, hierarchical HTML tables, 1:N caption matching, and RAG grounding manifest."
 readme = "README.md"
 authors = [
     { name = "ScholarMark Team" }
 ]
 license = { text = "MIT" }
-keywords = ["pdf-converter", "markdown", "academic-papers", "latex", "rag", "llm-grounding", "ocr", "scientific-papers"]
+keywords = ["pdf-converter", "markdown", "academic-papers", "latex", "rag", "llm-grounding", "ocr", "scientific-papers", "document-ai", "onnx"]
 classifiers = [
-    "Development Status :: 4 - Beta",
+    "Development Status :: 5 - Production/Stable",
     "Intended Audience :: Science/Research",
     "Intended Audience :: Developers",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
@@ -28,6 +28,7 @@ requires-python = ">=3.10"
 dependencies = [
     "pymupdf>=1.24.0",
     "pymupdf4llm>=1.24.0",
+    "numpy>=1.24.0",
     "rich>=13.0.0",
     "pyyaml>=6.0.0",
     "tabulate>=0.9.0",
@@ -38,6 +39,27 @@ deep = [
     "onnxruntime>=1.17.0",
     "scipy>=1.11.0",
     "pillow>=10.0.0",
+]
+vision = [
+    "onnxruntime>=1.19.0",
+    "scipy>=1.11.0",
+    "pillow>=10.0.0",
+    "opencv-python-headless>=4.9.0",
+    "huggingface_hub>=0.24.0",
+]
+gpu-dml = [
+    "onnxruntime-directml>=1.19.0",
+]
+formula-torch = [
+    "torch>=2.3.0",
+    "transformers>=4.44.0",
+]
+docling = [
+    "docling>=2.0.0",
+]
+bench = [
+    "rapidfuzz>=3.6.0",
+    "lxml>=5.0.0",
 ]
 dev = [
     "pytest>=8.0.0",
