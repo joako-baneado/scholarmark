@@ -358,8 +358,39 @@ class LayoutDetector:
             if rl.y0 > (page_h * 0.62) and 35.0 <= rl.width <= (page_w * 0.48):
                 footnote_rule_y = min(footnote_rule_y, rl.y0) if footnote_rule_y else rl.y0
 
-        # Clasificar los bloques textuales que no caen dentro de tablas ni figuras
-        for bb, text, spans, max_sz in prelim_text_blocks:
+        # Fusionar bandas de ecuaciones 2D fragmentadas (ej. numerador, denominador y tag '(1)' en bloques separados)
+        consumed_by_formula: set[int] = set()
+        for idx_tag, (bb_tag, txt_tag, _, _) in enumerate(prelim_text_blocks):
+            clean_tag = " ".join(txt_tag.split()).strip()
+            m_tag = re.fullmatch(r"\(\s*(\d+[a-zA-Z]?)\s*\)", clean_tag)
+            if not m_tag:
+                continue
+            eq_num = m_tag.group(1)
+            band_y0 = bb_tag.y0 - 24.0
+            band_y1 = bb_tag.y1 + 24.0
+            band_members = [idx_tag]
+            union_eq = bb_tag
+            for idx_other, (bb_o, txt_o, _, _) in enumerate(prelim_text_blocks):
+                if idx_other == idx_tag:
+                    continue
+                cy_o = (bb_o.y0 + bb_o.y1) * 0.5
+                if band_y0 <= cy_o <= band_y1 and len(txt_o.strip()) < 120:
+                    band_members.append(idx_other)
+                    union_eq = union_eq.union(bb_o)
+            if len(band_members) >= 2:
+                consumed_by_formula.update(band_members)
+                regions.append(LayoutRegion(
+                    kind="formula",
+                    bbox=union_eq.pad(3.0, page.rect),
+                    confidence=0.95,
+                    source="model",
+                    metadata={"tag": eq_num},
+                ))
+
+        # Clasificar los bloques textuales que no caen dentro de tablas, figuras ni bandas de ecuación
+        for b_idx, (bb, text, spans, max_sz) in enumerate(prelim_text_blocks):
+            if b_idx in consumed_by_formula:
+                continue
             # Si ya está absorbido por una tabla detectada, lo manejará TableRecognizer
             if any(bb.coverage_by(tb) > 0.65 for tb in table_boxes):
                 continue

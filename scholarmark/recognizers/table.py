@@ -180,22 +180,27 @@ class TableRecognizer:
             mapped_row.sort(key=lambda item: item["col_start"])
             structured_rows.append(mapped_row)
 
-        # Detectar rowspan en un encabezado de 2 niveles:
-        # Si la fila 0 tiene una celda de 1 columna (ej. 'Method') y otra celda con colspan >= 2 (ej. 'Dataset A'),
-        # y la fila 1 no tiene celda en la columna 0 (porque 'Method' abarca las dos filas de encabezado),
-        # asignar rowspan=2 a la celda de la fila 0 en la columna 0.
+        # Detectar encabezado jerárquico de 2 niveles (colspan y rowspan):
+        # Si la fila 0 tiene menos celdas que num_cols y la fila 1 subdivide las columnas derechas,
+        # expandir el colspan de las celdas agrupadoras de la fila 0 y el rowspan de las columnas fijas.
         header_row_count = 1
         if len(structured_rows) >= 3:
-            row0_has_colspan = any(c["colspan"] > 1 for c in structured_rows[0])
+            row0 = structured_rows[0]
+            row1 = structured_rows[1]
             row1_cols = {
                 ci
-                for c in structured_rows[1]
+                for c in row1
                 for ci in range(c["col_start"], c["col_start"] + c["colspan"])
             }
-            if row0_has_colspan and len(row1_cols) < num_cols:
+            if len(row0) < num_cols and 0 < len(row1_cols) < num_cols:
                 header_row_count = 2
-                for c0 in structured_rows[0]:
-                    if c0["colspan"] == 1 and c0["col_start"] not in row1_cols:
+                for idx_c0, c0 in enumerate(row0):
+                    next_start = row0[idx_c0 + 1]["col_start"] if (idx_c0 + 1) < len(row0) else num_cols
+                    sub_cols = [ci for ci in range(c0["col_start"], next_start) if ci in row1_cols]
+                    if len(sub_cols) >= 2 and c0["colspan"] < len(sub_cols):
+                        c0["colspan"] = max(sub_cols) - c0["col_start"] + 1
+                        has_merged = True
+                    elif c0["colspan"] == 1 and c0["col_start"] not in row1_cols:
                         c0["rowspan"] = 2
                         has_merged = True
 
