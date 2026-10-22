@@ -1,5 +1,5 @@
 """
-Grounding manifest generator module for ScholarMark v3.0.
+Grounding manifest generator module for ScholarMark v4.1.
 Builds a machine-readable JSON index of tables (GFM & semantic HTML), equations,
 metrics, and sections specifically tailored for RAG pipelines and LLM citation validators.
 """
@@ -49,7 +49,7 @@ def extract_document_info(md_path: Path) -> dict:
     """
     Extrae metadatos, tablas estructuradas (GFM y HTML), ecuaciones, métricas,
     bibliografía estructurada, afirmaciones ancladas (grounded_claims) y semántica
-    de gráficos de un archivo Markdown (y su *.ir.json compañero si existe).
+    de gráficos de un archivo Markdown (y su *.scholarmark.json / *.ir.json compañero si existe).
     """
     text = md_path.read_text(encoding='utf-8')
 
@@ -107,12 +107,14 @@ def extract_document_info(md_path: Path) -> dict:
         r'\b\d+(?:\.\d+)?\s*(?:ms|s|FPS|fps|Hz|kHz|GFLOPs|MFLOPs|MB|GB|params)\b', text
     )))[:25]
 
-    # 7. Bibliografía y citas desde *.ir.json compañero o desde el propio Markdown
+    # 7. Bibliografía y citas desde *.scholarmark.json o *.ir.json compañero, o desde el propio Markdown
     references_list = []
     grounded_claims = []
     algorithms_count = 0
 
-    ir_json_path = md_path.with_suffix(".ir.json")
+    ir_json_path = md_path.with_suffix(".scholarmark.json")
+    if not ir_json_path.exists():
+        ir_json_path = md_path.with_suffix(".ir.json")
     if ir_json_path.exists():
         try:
             ir_data = json.loads(ir_json_path.read_text(encoding='utf-8'))

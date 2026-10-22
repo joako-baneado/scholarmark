@@ -1,5 +1,5 @@
 """
-Engine registry and factory for ScholarMark v3.0.
+Engine registry and factory for ScholarMark v4.1.
 """
 
 from typing import Dict, Type
@@ -23,17 +23,16 @@ def register_engine(name: str, engine_cls: Type[BaseEngine]) -> None:
 def get_engine(config: ExtractorConfig) -> BaseEngine:
     """
     Selecciona e instancia el motor de extracción solicitado en config.engine:
-    - 'auto': usa 'vision' si onnx_model_path está configurado, y 'fast' (con PyMuPDF GNN layout)
-      como motor predeterminado de baja latencia; ambos disponibles explícitamente con --engine.
+    - 'auto': usa 'vision' (motor híbrido geométrico-tipográfico 2D sin requerir GPU ni descargas)
+      como motor predeterminado de alta precisión y baja latencia; cae a 'fast' solo si no está disponible.
     - 'fast' | 'vision' | 'docling': instancia explícitamente el motor solicitado.
     """
     requested = (config.engine or "auto").lower().strip()
     if requested == "auto":
-        if config.onnx_model_path or config.export_json:
-            vis = VisionEngine(config)
-            ok, _ = vis.available()
-            if ok:
-                return vis
+        vis = VisionEngine(config)
+        ok, _ = vis.available()
+        if ok:
+            return vis
         return FastEngine(config)
 
     if requested not in ENGINE_REGISTRY:
