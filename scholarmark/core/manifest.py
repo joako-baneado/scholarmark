@@ -13,6 +13,7 @@ import yaml
 
 from .. import __version__
 from ..ir.document import DocumentIR
+from ..utils.paths import to_extended_path
 from .citations import BibliographyParser, expand_citation_markers
 
 
@@ -157,7 +158,8 @@ def extract_document_info(md_path: Path) -> dict:
     bibliografía estructurada, afirmaciones ancladas (grounded_claims) y semántica
     de gráficos de un archivo Markdown (y su *.scholarmark.json / *.ir.json compañero si existe).
     """
-    text = md_path.read_text(encoding='utf-8')
+    with open(to_extended_path(md_path), "r", encoding="utf-8") as _mf:
+        text = _mf.read()
 
     # 1. Frontmatter YAML
     meta = {}
@@ -194,11 +196,12 @@ def extract_document_info(md_path: Path) -> dict:
     algorithms_count = 0
 
     ir_json_path = md_path.with_suffix(".scholarmark.json")
-    if not ir_json_path.exists():
+    if not Path(to_extended_path(ir_json_path)).exists():
         ir_json_path = md_path.with_suffix(".ir.json")
-    if ir_json_path.exists():
+    if Path(to_extended_path(ir_json_path)).exists():
         try:
-            ir_data = json.loads(ir_json_path.read_text(encoding='utf-8'))
+            with open(to_extended_path(ir_json_path), "r", encoding="utf-8") as _jf:
+                ir_data = json.load(_jf)
             ir_meta = ir_data.get("meta") or {}
             references_list = ir_meta.get("bibliography") or []
             grounded_claims = ir_meta.get("grounded_claims") or []
@@ -232,7 +235,7 @@ def extract_document_info(md_path: Path) -> dict:
 
     if not grounded_claims:
         body_text = re.split(r'^##\s+[^\n]*(?:References|Bibliography|Referencias)', text, flags=re.IGNORECASE | re.MULTILINE)[0]
-        for sent in re.split(r'(?<=[.!?])\s+(?=[A-ZÁÉÍÓÚÑ0-9\[])', body_text):
+        for sent in re.split(r'(?<=[.!?])\s+(?=[A-ZÁÉÍÓÚ0-9\[])', body_text):
             s_clean = " ".join(sent.split()).strip()
             if len(s_clean) < 20 or s_clean.startswith(("---", "#", "|", "!")):
                 continue
@@ -295,17 +298,21 @@ def generate_manifest(
         'version': __version__,
         'generator': f'ScholarMark High-Precision Extractor v{__version__}',
         'total_papers': len(md_files),
-        'documents': {}
+        'documents': {},
+        'papers': {},
     }
 
     precomputed_map = precomputed or {}
     for f in md_files:
         if f.stem in precomputed_map and precomputed_map[f.stem] is not None:
             manifest_data['documents'][f.stem] = precomputed_map[f.stem]
+            manifest_data['papers'][f.stem] = precomputed_map[f.stem]
         else:
-            manifest_data['documents'][f.stem] = extract_document_info(f)
+            entry = extract_document_info(f)
+            manifest_data['documents'][f.stem] = entry
+            manifest_data['papers'][f.stem] = entry
 
-    with open(output_file, 'w', encoding='utf-8') as jf:
+    with open(to_extended_path(output_file), 'w', encoding='utf-8') as jf:
         json.dump(manifest_data, jf, indent=2, ensure_ascii=False)
 
     return manifest_data
