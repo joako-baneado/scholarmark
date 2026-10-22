@@ -106,3 +106,48 @@ def test_task1_2_in_memory_manifest_without_json_export(tmp_path: Path):
     assert doc_entry["algorithms_count"] == 1
     assert doc_entry["references_count"] == 1
     assert len(doc_entry["grounded_claims"]) >= 1
+
+
+def test_task2_1_single_pass_page_context_eliminates_redundant_calls(tmp_path: Path):
+    import fitz
+    from unittest.mock import patch
+    from scholarmark.core.page_context import PageContext
+
+    pdf_path = tmp_path / "single_pass.pdf"
+    doc = fitz.open()
+    pg = doc.new_page(width=595, height=842)
+    pg.insert_text(fitz.Point(55, 65), "1. Methodology", fontsize=12)
+    pg.insert_text(fitz.Point(55, 95), "We compute the loss function as follows:", fontsize=10)
+    pg.insert_text(fitz.Point(160, 130), "L = x + y (1)", fontsize=10.5)
+    pg.insert_text(fitz.Point(55, 165), "Algorithm 1: Fast Step", fontsize=10.5)
+    pg.insert_text(fitz.Point(55, 180), "1: for i in N do", fontsize=9.5)
+    pg.insert_text(fitz.Point(70, 194), "2: x <- x + 1", fontsize=9.5)
+    pg.insert_text(fitz.Point(55, 208), "3: end for", fontsize=9.5)
+    doc.save(str(pdf_path))
+    doc.close()
+
+    cfg = ExtractorConfig(engine="vision", extract_images=False)
+    eng = VisionEngine(cfg)
+
+    with fitz.open(str(pdf_path)) as d:
+        page = d[0]
+        ctx = PageContext.from_page(page, 1)
+        assert len(ctx.words) >= 10
+        assert "Methodology" in ctx.full_text
+
+        orig_get_text = fitz.Page.get_text
+        rawdict_calls = []
+
+        def tracked_get_text(self_page, option="text", *args, **kwargs):
+            if option in ("rawdict", "dict"):
+                rawdict_calls.append(option)
+            return orig_get_text(self_page, option, *args, **kwargs)
+
+        with patch.object(fitz.Page, "find_tables", return_value=None), patch.object(
+            fitz.Page, "get_text", autospec=True, side_effect=tracked_get_text
+        ):
+            ir, _ = eng.parse(d, pdf_path)
+
+        # PageContext.from_page executes exactly 1 "rawdict" call per page across all ScholarMark stages
+        assert rawdict_calls == ["rawdict"]
+        assert len(ir.pages) == 1

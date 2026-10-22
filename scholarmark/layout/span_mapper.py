@@ -1,15 +1,16 @@
 """
-Native Vector Span Mapper for ScholarMark v3.0.
+Native Vector Span Mapper for ScholarMark v4.1.
 Intersects layout bounding boxes with native PDF text spans (rawdict/dict),
 reconstructs physical word spacing (Δx kerning), and rescues any orphan spans
 to guarantee 0.0% content hallucination and 100% native text retention.
 """
 
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 import fitz
 
 from .detector import LayoutRegion
 from ..core.geometry import BoundingBox
+from ..core.page_context import PageContext
 from ..ir.document import Block
 
 
@@ -42,16 +43,16 @@ def map_spans_to_blocks(
     page: fitz.Page,
     page_num: int,
     regions: List[LayoutRegion],
-    rescue_orphans: bool = True
+    rescue_orphans: bool = True,
+    ctx: Optional[PageContext] = None,
 ) -> List[Block]:
     """
     Puebla cada región detectada por LayoutDetector con el texto nativo exacto de la página
     y rescata cualquier línea de texto que haya quedado fuera de las cajas detectadas.
     """
-    raw_dict = page.get_text("dict")
+    raw_dict = ctx.raw_dict if ctx is not None else page.get_text("dict")
     raw_blocks = raw_dict.get("blocks", [])
 
-    # Extraer todas las líneas nativas con su bbox y texto reconstruido con kerning
     native_lines: List[Dict[str, Any]] = []
     for b in raw_blocks:
         if b.get("type") != 0:
@@ -72,8 +73,6 @@ def map_spans_to_blocks(
         bid = f"p{page_num}_{reg.kind}_{r_idx}"
 
         if reg.kind in ("figure", "table"):
-            # El contenido de tablas y figuras se procesa en sus módulos dedicados,
-            # pero marcamos sus líneas internas como consumidas para no duplicarlas como prosa huérfana
             for nl in native_lines:
                 if nl["bbox"].coverage_by(reg.bbox) >= 0.50:
                     nl["consumed"] = True
@@ -98,7 +97,6 @@ def map_spans_to_blocks(
                 nl["consumed"] = True
 
         matched_lines.sort(key=lambda item: (round(item["bbox"].y0, 1), round(item["bbox"].x0, 1)))
-        # Unir líneas manejando guiones de corte de línea (hyphenation)
         assembled_lines: List[str] = []
         for item in matched_lines:
             line_str = item["text"]
@@ -129,7 +127,6 @@ def map_spans_to_blocks(
             metadata=dict(reg.metadata),
         ))
 
-    # Rescate de spans/líneas huérfanas que no cayeron en ninguna región
     if rescue_orphans:
         orphan_lines = [nl for nl in native_lines if not nl["consumed"]]
         for o_idx, ol in enumerate(orphan_lines, 1):

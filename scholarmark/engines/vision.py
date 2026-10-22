@@ -1,6 +1,6 @@
 """
-VisionEngine: ScholarMark v3.0 Asymmetric Hybrid Modular Pipeline.
-Combines LayoutDetector (ONNX / Multimodal), Native SpanMapper, 2D FormulaRecognizer,
+VisionEngine: ScholarMark v4.1 Asymmetric Hybrid Modular Pipeline.
+Combines Single-Pass PageContext, LayoutDetector, Native SpanMapper, 2D FormulaRecognizer,
 Hierarchical HTML TableRecognizer, 1:N Bipartite CaptionMatcher, and DAG Reading Order Solver.
 """
 
@@ -16,6 +16,7 @@ from ..core.caption_matcher import (
 )
 from ..core.citations import CitationLinker
 from ..core.geometry import VisualElement, render_crop_300dpi
+from ..core.page_context import PageContext
 from ..ir.document import DocumentIR, PageIR, Block
 from ..layout import (
     LayoutDetector,
@@ -34,14 +35,15 @@ from ..recognizers import (
 
 class VisionEngine(BaseEngine):
     """
-    Motor híbrido v3.2:
-    1. Detección de regiones de diseño (LayoutDetector).
-    2. Mapeo de spans vectoriales nativos + rescate de huérfanos (SpanMapper).
-    3. Reconstrucción algebraica 2D de ecuaciones aisladas + fallback PUA (FormulaRecognizer).
-    4. Reconstrucción tabular jerárquica HTML/GFM + fallback ráster (TableRecognizer).
-    5. Reconstrucción de algoritmos y pseudocódigo con sangría exacta (AlgorithmRecognizer).
-    6. Asociación de leyendas 1:N (CaptionMatcher), semántica de gráficos (ChartSemanticsExtractor) y recorte 300 DPI.
-    7. Orden de lectura topológico DAG, unión inter-página y grafo bidireccional de citas (CitationLinker).
+    Motor híbrido v4.1 sobre PageContext de paso único:
+    1. Extracción unificada por página (PageContext: 1x rawdict + 1x bboxlog).
+    2. Detección de regiones de diseño (LayoutDetector).
+    3. Mapeo de spans vectoriales nativos + rescate de huérfanos (SpanMapper).
+    4. Reconstrucción algebraica 2D de ecuaciones aisladas + fallback PUA (FormulaRecognizer).
+    5. Reconstrucción tabular jerárquica HTML/GFM + fallback ráster (TableRecognizer).
+    6. Reconstrucción de algoritmos y pseudocódigo con sangría exacta (AlgorithmRecognizer).
+    7. Asociación de leyendas 1:N (CaptionMatcher), semántica de gráficos (ChartSemanticsExtractor) y recorte 300 DPI.
+    8. Orden de lectura topológico DAG, unión inter-página y grafo bidireccional de citas (CitationLinker).
     """
     name = "vision"
 
@@ -63,7 +65,7 @@ class VisionEngine(BaseEngine):
 
     def available(self) -> Tuple[bool, str]:
         _, label = resolve_ort_providers(self.config.device)
-        return True, f"VisionEngine v3.2 ready ({label})"
+        return True, f"VisionEngine v4.1 ready ({label})"
 
     def parse(
         self,
@@ -78,8 +80,16 @@ class VisionEngine(BaseEngine):
         for p_idx in range(len(doc)):
             page = doc[p_idx]
             page_num = p_idx + 1
-            page_w = float(page.rect.width)
-            page_h = float(page.rect.height)
+
+            # Etapa 0: Extracción unificada de paso único en memoria (PageContext)
+            ctx = PageContext.from_page(
+                page=page,
+                page_num=page_num,
+                max_primitives=self.config.max_page_vector_primitives,
+            )
+            page_w = ctx.width
+            page_h = ctx.height
+            drawings = ctx.drawings
 
             # Etapa 1: Detección estructural de regiones
             regions = self.layout_detector.detect_page(
@@ -89,6 +99,7 @@ class VisionEngine(BaseEngine):
                 max_figure_primitives=self.config.max_figure_vector_primitives,
                 elastic_min=self.config.elastic_padding_min,
                 elastic_max=self.config.elastic_padding_max,
+                ctx=ctx,
             )
 
             # Etapa 2: Intersección con spans nativos del PDF (0% alucinación en prosa)
@@ -97,16 +108,7 @@ class VisionEngine(BaseEngine):
                 page_num=page_num,
                 regions=regions,
                 rescue_orphans=True,
-            )
-
-            try:
-                bboxlog = page.get_bboxlog()
-            except Exception:
-                bboxlog = []
-            drawings = (
-                page.get_drawings()
-                if len(bboxlog) <= self.config.max_page_vector_primitives
-                else None
+                ctx=ctx,
             )
 
             # Etapa 3A: Reconocimiento de fórmulas 2D + reparación de glifos PUA
@@ -117,6 +119,7 @@ class VisionEngine(BaseEngine):
                         bbox=b.bbox,
                         fallback_text=b.text,
                         drawings=drawings,
+                        ctx=ctx,
                     )
                     b.latex = latex_str
                     b.confidence = conf
@@ -133,6 +136,7 @@ class VisionEngine(BaseEngine):
                     html_str, gfm_str, has_merged = self.table_recognizer.recognize_table(
                         page=page,
                         bbox=b.bbox,
+                        ctx=ctx,
                     )
                     b.html = html_str
                     b.gfm = gfm_str
@@ -148,6 +152,7 @@ class VisionEngine(BaseEngine):
                         page=page,
                         bbox=b.bbox,
                         fallback_text=b.text,
+                        ctx=ctx,
                     )
                     b.gfm = algo_res.formatted_markdown
                     b.confidence = algo_res.confidence
@@ -174,6 +179,7 @@ class VisionEngine(BaseEngine):
                     page=page,
                     bbox=fb.bbox,
                     exclude_subpanels=fb.metadata.get("subpanel_labels", []),
+                    ctx=ctx,
                 )
                 if chart_sem.has_content:
                     fb.metadata["chart_semantics"] = chart_sem.to_dict()
@@ -204,7 +210,6 @@ class VisionEngine(BaseEngine):
                     if vf.composite_group_id:
                         fb.metadata["composite_group_id"] = vf.composite_group_id
 
-            # Renderizar activos visuales de figuras
             if self.config.extract_images and asset_dir:
                 for f_idx, fb in enumerate(fig_blocks, 1):
                     filename = f"fig_p{page_num}_{f_idx}.png"
@@ -221,7 +226,6 @@ class VisionEngine(BaseEngine):
                         if fb.caption_text:
                             caption_map[filename] = fb.caption_text
 
-            # Asociación de títulos de tablas (Table I: ...)
             tab_blocks = [b for b in blocks if b.kind == "table"]
             tab_cap_blocks = [b for b in blocks if b.kind == "table_caption" and b.text.strip()]
             if tab_blocks and tab_cap_blocks and self.config.caption_matching:
@@ -243,7 +247,7 @@ class VisionEngine(BaseEngine):
                 page_number=page_num,
                 width=page_w,
                 height=page_h,
-                rotation=int(page.rotation),
+                rotation=ctx.rotation,
                 blocks=ordered_blocks,
                 reading_order=[b.id for b in ordered_blocks],
             ))
@@ -251,7 +255,6 @@ class VisionEngine(BaseEngine):
         # Etapa 5B: Unión de párrafos partidos entre páginas y orden global
         global_order = stitch_cross_page_paragraphs(pages_ir)
 
-        # Extraer metadatos del documento desde los primeros bloques
         sample_text = "\n".join(
             (f"# {b.text}" if b.kind == "title" else b.text)
             for p in pages_ir[:2]
@@ -268,7 +271,7 @@ class VisionEngine(BaseEngine):
             markdown_override=None,
         )
 
-        # Etapa 6 (v3.2): Parser estructural de bibliografía y grafo bidireccional de citas
+        # Etapa 6: Parser estructural de bibliografía y grafo bidireccional de citas
         CitationLinker.link_document_ir(ir)
 
         stats = {
