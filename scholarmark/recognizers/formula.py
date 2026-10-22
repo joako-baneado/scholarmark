@@ -316,6 +316,10 @@ class FormulaRecognizer:
         if matrix_latex:
             return matrix_latex
 
+        multiline_latex = self._try_reconstruct_multiline_aligned(tokens, bars)
+        if multiline_latex:
+            return multiline_latex
+
         sorted_toks = sorted(tokens, key=lambda t: (round(t.bbox.x0, 1), round(t.bbox.y0, 1)))
         max_size = max(t.font_size for t in sorted_toks)
         base_Threshold_size = max_size * 0.86
@@ -390,7 +394,7 @@ class FormulaRecognizer:
         y la serializa como \\begin{pmatrix} ... \\end{pmatrix}.
         """
         core = [t for t in tokens if t.text.strip() not in ("(", ")", "[", "]", "{", "}")]
-        if len(core) < 4:
+        if len(core) < 4 or any(t.text.strip() == "=" for t in core):
             return None
 
         core_sorted_y = sorted(core, key=lambda t: t.cy)
@@ -424,6 +428,138 @@ class FormulaRecognizer:
 
         body = r" \\ ".join(row_strs)
         return rf"\begin{{pmatrix}} {body} \end{{pmatrix}}"
+
+    def _try_reconstruct_multiline_aligned(
+        self,
+        tokens: List[MathSpanToken],
+        bars: List[BoundingBox],
+    ) -> Optional[str]:
+        """
+        Detecta bloques de ecuaciones multilínea (2+ líneas horizontales disjuntas en Y no separadas
+        por una barra de fracción) y los serializa como \\begin{aligned} ... \\\\ ... \\end{aligned}.
+        """
+        if len(tokens) < 4:
+            return None
+
+        max_size = max(t.font_size for t in tokens)
+        main_toks = [t for t in tokens if t.font_size >= (max_size * 0.85)]
+        if len(main_toks) < 4:
+            return None
+
+        main_sorted_y = sorted(main_toks, key=lambda t: t.cy)
+        bands: List[List[MathSpanToken]] = []
+        for t in main_sorted_y:
+            if not bands:
+                bands.append([t])
+            else:
+                prev_cy = sum(x.cy for x in bands[-1]) / len(bands[-1])
+                if (t.cy - prev_cy) > (max_size * 1.35):
+                    bands.append([t])
+                else:
+                    bands[-1].append(t)
+
+        if len(bands) < 2:
+            return None
+
+        # Si alguna barra de fracción separa dos bandas consecutivas, no es una ecuación multilínea independiente
+        band_cys = [sum(x.cy for x in b) / len(b) for b in bands]
+        for k in range(len(band_cys) - 1):
+            y_top, y_bot = band_cys[k], band_cys[k + 1]
+            for bar in bars:
+                bar_cy = (bar.y0 + bar.y1) * 0.5
+                if (y_top - 2.0) <= bar_cy <= (y_bot + 2.0):
+                    return None
+
+        # Requerir que cada banda tenga al menos 2 tokens principales
+        if any(len(b) < 2 for b in bands):
+            return None
+
+        full_bands: List[List[MathSpanToken]] = [[] for _ in bands]
+        for t in tokens:
+            best_k = min(range(len(band_cys)), key=lambda k: abs(t.cy - band_cys[k]))
+            full_bands[best_k].append(t)
+
+        band_bars: List[List[BoundingBox]] = [[] for _ in bands]
+        for bar in bars:
+            bar_cy = (bar.y0 + bar.y1) * 0.5
+            best_k = min(range(len(band_cys)), key=lambda k: abs(bar_cy - band_cys[k]))
+            band_bars[best_k].append(bar)
+
+        row_latex_list: List[str] = []
+        for k in range(len(bands)):
+            # Reconstruir cada línea de forma independiente
+            row_str = self._reconstruct_single_line(full_bands[k], band_bars[k]).strip()
+            if row_str:
+                row_latex_list.append(row_str)
+
+        if len(row_latex_list) < 2:
+            return None
+
+        has_equals = sum(1 for r in row_latex_list if "=" in r) >= 2
+        if has_equals:
+            row_latex_list = [r.replace("=", "&=", 1) if "=" in r else r for r in row_latex_list]
+
+        joined = r" \\ ".join(row_latex_list)
+        return rf"\begin{{aligned}} {joined} \end{{aligned}}"
+
+    def _reconstruct_single_line(
+        self,
+        tokens: List[MathSpanToken],
+        bars: List[BoundingBox],
+    ) -> str:
+        """Reconstruye una única línea de ecuación (con posibles fracciones internas y scripts)."""
+        if not tokens:
+            return ""
+        sorted_toks = sorted(tokens, key=lambda t: (round(t.bbox.x0, 1), round(t.bbox.y0, 1)))
+        out_parts: List[str] = []
+        i = 0
+        n = len(sorted_toks)
+        while i < n:
+            base_t = sorted_toks[i]
+            base_latex = _normalize_token_latex(base_t.text)
+            base_cy = base_t.cy
+            base_h = max(4.0, base_t.bbox.height)
+            j = i + 1
+            sub_toks: List[MathSpanToken] = []
+            sup_toks: List[MathSpanToken] = []
+            is_big_op = any(op in base_latex for op in _BIG_OPS)
+            while j < n:
+                cand = sorted_toks[j]
+                horiz_overlap = not (cand.bbox.x1 < (base_t.bbox.x0 - 4.0) or cand.bbox.x0 > (base_t.bbox.x1 + 14.0))
+                dy = cand.cy - base_cy
+                is_smaller = cand.font_size < (base_t.font_size * 0.90)
+                if is_big_op and horiz_overlap and abs(dy) > (base_h * 0.18):
+                    if dy < 0:
+                        sup_toks.append(cand)
+                    else:
+                        sub_toks.append(cand)
+                    j += 1
+                    continue
+                last_x1 = max(
+                    [base_t.bbox.x1]
+                    + [t.bbox.x1 for t in sub_toks]
+                    + [t.bbox.x1 for t in sup_toks]
+                )
+                if (cand.bbox.x0 - last_x1) <= max(6.0, base_t.font_size * 0.65) and (
+                    is_smaller or abs(dy) >= (base_h * 0.22)
+                ) and abs(dy) >= (base_h * 0.14):
+                    if dy < 0:
+                        sup_toks.append(cand)
+                    else:
+                        sub_toks.append(cand)
+                    j += 1
+                else:
+                    break
+            piece = base_latex
+            if sub_toks:
+                sub_str = self._reconstruct_single_line(sub_toks, [])
+                piece += f"_{{{sub_str}}}"
+            if sup_toks:
+                sup_str = self._reconstruct_single_line(sup_toks, [])
+                piece += f"^{{{sup_str}}}"
+            out_parts.append(piece)
+            i = j
+        return " ".join(out_parts)
 
     def recognize_region(
         self,

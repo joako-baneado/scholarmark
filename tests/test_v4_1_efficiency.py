@@ -314,3 +314,47 @@ def test_task3_2_multiprocess_batch_pool_race_free_manifest(tmp_path: Path):
     # Second run should skip all 4 via DeltaCache recorded in parent process
     results_cached = extractor.convert_batch(src_dir, out_dir)
     assert all(r.status == "skipped" for r in results_cached)
+
+
+def test_task4_1_multiline_aligned_equations_and_inline_scripts(tmp_path: Path):
+    import fitz
+    from scholarmark.layout.span_mapper import _reconstruct_line_text_with_kerning
+    from scholarmark.recognizers.formula import FormulaRecognizer
+
+    # 1. Inline subscript and superscript reconstruction via baseline Δy + font size
+    spans = [
+        {"text": "where L", "bbox": [50.0, 100.0, 90.0, 110.0], "size": 10.0},
+        {"text": "total", "bbox": [90.5, 103.5, 105.0, 110.5], "size": 7.0},
+        {"text": " = x", "bbox": [108.0, 100.0, 128.0, 110.0], "size": 10.0},
+        {"text": "i", "bbox": [128.5, 103.5, 132.0, 110.5], "size": 7.0},
+        {"text": "2", "bbox": [132.5, 97.0, 137.0, 104.0], "size": 7.0},
+        {"text": " in R", "bbox": [140.0, 100.0, 165.0, 110.0], "size": 10.0},
+        {"text": "3", "bbox": [165.5, 97.0, 170.0, 104.0], "size": 7.0},
+    ]
+    reconstructed = _reconstruct_line_text_with_kerning(spans)
+    assert "L_{total}" in reconstructed
+    assert "x_{i}^{2}" in reconstructed
+    assert "R^{3}" in reconstructed
+
+    # 2. Multiline equation block reconstructed as \begin{aligned} ... \\ ... \end{aligned}
+    pdf_eq = tmp_path / "multiline_eq.pdf"
+    doc = fitz.open()
+    pg = doc.new_page(width=595, height=842)
+    pg.insert_text(fitz.Point(140, 120), "L_1 = a + b", fontsize=11)
+    pg.insert_text(fitz.Point(140, 145), "L_2 = c + d (1)", fontsize=11)
+    doc.save(str(pdf_eq))
+    doc.close()
+
+    rec = FormulaRecognizer()
+    with fitz.open(str(pdf_eq)) as d:
+        latex_str, conf, tag = rec.recognize_region(
+            page=d[0],
+            bbox=BoundingBox(120, 100, 400, 160),
+            fallback_text="L_1 = a + b L_2 = c + d (1)",
+        )
+    assert r"\begin{aligned}" in latex_str
+    assert r"\\" in latex_str
+    assert r"\end{aligned}" in latex_str
+    assert "&=" in latex_str
+    assert tag == "1"
+    assert conf >= 0.90

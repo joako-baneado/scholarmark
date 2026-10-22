@@ -5,6 +5,7 @@ reconstructs physical word spacing (Δx kerning), and rescues any orphan spans
 to guarantee 0.0% content hallucination and 100% native text retention.
 """
 
+import re
 from typing import List, Dict, Any, Optional
 import fitz
 
@@ -13,22 +14,55 @@ from ..core.geometry import BoundingBox
 from ..core.page_context import PageContext
 from ..ir.document import Block
 
+_INLINE_SCRIPT_RE = re.compile(r"^[A-Za-z0-9+\-(),]+$")
+_INLINE_BASE_RE = re.compile(r"^[A-Za-zΑ-Ωα-ω][A-Za-z0-9]{0,2}$")
+
 
 def _reconstruct_line_text_with_kerning(spans: List[Dict[str, Any]]) -> str:
     """
     Une los spans de una línea reconstruyendo espacios físicos cuando la distancia
-    horizontal (Δx) entre dos spans consecutivos supera el 18% del tamaño de fuente.
+    horizontal (Δx) entre dos spans consecutivos supera el 18% del tamaño de fuente,
+    y detecta desplazamientos verticales de línea base (Δy) con reducción de cuerpo
+    tipográfico para reconstruir subíndices (_{...}) y superíndices (^{...}) inline.
     """
     if not spans:
         return ""
     parts: List[str] = []
-    prev_x1 = None
+    prev_x1: Optional[float] = None
+    base_sz: Optional[float] = None
+    base_cy: Optional[float] = None
+    base_token: str = ""
+
     for s in spans:
         txt = s.get("text", "")
         if not txt:
             continue
         bbox = s.get("bbox")
         sz = float(s.get("size", 10.0))
+        cy = ((float(bbox[1]) + float(bbox[3])) * 0.5) if bbox is not None else None
+        txt_clean = txt.strip()
+
+        if (
+            prev_x1 is not None
+            and bbox is not None
+            and base_sz is not None
+            and base_cy is not None
+            and cy is not None
+            and 1 <= len(txt_clean) <= 6
+            and _INLINE_SCRIPT_RE.fullmatch(txt_clean)
+            and _INLINE_BASE_RE.fullmatch(base_token)
+            and sz <= (base_sz * 0.82)
+            and -2.0 <= (float(bbox[0]) - prev_x1) <= (base_sz * 0.40)
+            and abs(cy - base_cy) >= (base_sz * 0.10)
+        ):
+            dy = cy - base_cy
+            if dy > 0:
+                parts.append(f"_{{{txt_clean}}}")
+            else:
+                parts.append(f"^{{{txt_clean}}}")
+            prev_x1 = float(bbox[2])
+            continue
+
         if prev_x1 is not None and bbox is not None:
             dx = float(bbox[0]) - prev_x1
             if dx > (sz * 0.18) and (not parts or not parts[-1].endswith(" ")) and not txt.startswith(" "):
@@ -36,6 +70,10 @@ def _reconstruct_line_text_with_kerning(spans: List[Dict[str, Any]]) -> str:
         parts.append(txt)
         if bbox is not None:
             prev_x1 = float(bbox[2])
+            base_sz = sz
+            base_cy = cy
+            words_in_span = txt.rstrip().split()
+            base_token = words_in_span[-1].lstrip("([") if (words_in_span and not txt.endswith(" ")) else ""
     return "".join(parts).strip()
 
 
