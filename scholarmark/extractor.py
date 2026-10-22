@@ -3,10 +3,12 @@ Core ScholarExtractor pipeline implementation with pluggable engines (fast, visi
 and canonical DocumentIR serialization (Markdown + JSON) with zero-disk in-memory manifest generation.
 """
 
+import os
 import time
+from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 from dataclasses import dataclass
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Tuple
 
 import fitz  # PyMuPDF
 
@@ -35,6 +37,16 @@ class ExtractionResult:
     target_json: Optional[str] = None
     target_chunks: Optional[str] = None
     manifest_entry: Optional[Dict[str, Any]] = None
+
+
+def _convert_single_worker(
+    pdf_path_str: str,
+    output_dir_str: str,
+    config: ExtractorConfig,
+) -> ExtractionResult:
+    """Worker de nivel superior para ProcessPoolExecutor (sin condiciones de carrera en DeltaCache)."""
+    ext = ScholarExtractor(config=config)
+    return ext.convert_file(Path(pdf_path_str), Path(output_dir_str), update_cache=False)
 
 
 class ScholarExtractor:
@@ -82,7 +94,12 @@ class ScholarExtractor:
             "is_predominantly_scanned": len(scanned_pages) > (total_pages * 0.5) if total_pages > 0 else False,
         }
 
-    def convert_file(self, pdf_path: Path, output_dir: Path) -> ExtractionResult:
+    def convert_file(
+        self,
+        pdf_path: Path,
+        output_dir: Path,
+        update_cache: bool = True,
+    ) -> ExtractionResult:
         """Convierte un único archivo PDF a Markdown de alta fidelidad (y opcionalmente JSON canónico y chunks JSONL)."""
         pdf_path = Path(pdf_path)
         output_dir = Path(output_dir)
@@ -143,9 +160,10 @@ class ScholarExtractor:
             vector_count = int(stats.get("vector_figures", 0))
             engine_used = str(stats.get("engine_used", engine.name))
 
-            cache = DeltaCache(output_dir)
-            cache.record(pdf_path, target_md, self.config, figure_count=fig_count)
-            cache.save()
+            if update_cache:
+                cache = DeltaCache(output_dir)
+                cache.record(pdf_path, target_md, self.config, figure_count=fig_count)
+                cache.save()
 
             return ExtractionResult(
                 status="success",
@@ -187,9 +205,11 @@ class ScholarExtractor:
         output_dir.mkdir(parents=True, exist_ok=True)
 
         pdf_files = sorted([f for f in source_dir.glob("*.pdf")])
-        results: List[ExtractionResult] = []
+        total_files = len(pdf_files)
+        results_by_idx: Dict[int, ExtractionResult] = {}
         cache = DeltaCache(output_dir)
         precomputed_manifest: Dict[str, dict] = {}
+        pending: List[Tuple[int, Path]] = []
 
         for idx, pdf in enumerate(pdf_files, 1):
             target_md = output_dir / f"{pdf.stem}.md"
@@ -206,18 +226,55 @@ class ScholarExtractor:
                     elapsed_seconds=0.0,
                     engine_used=self.config.engine,
                 )
-                results.append(res)
+                results_by_idx[idx] = res
                 if on_progress:
-                    on_progress(idx, len(pdf_files), pdf, res)
-                continue
+                    on_progress(idx, total_files, pdf, res)
+            else:
+                pending.append((idx, pdf))
 
-            res = self.convert_file(pdf, output_dir)
-            if res.status == "success" and res.manifest_entry is not None:
-                precomputed_manifest[pdf.stem] = res.manifest_entry
-            cache.record(pdf, target_md, self.config, figure_count=res.figure_count)
-            results.append(res)
-            if on_progress:
-                on_progress(idx, len(pdf_files), pdf, res)
+        effective_workers = (
+            min(4, os.cpu_count() or 1)
+            if self.config.workers == 0
+            else max(1, int(self.config.workers))
+        )
+
+        if effective_workers > 1 and len(pending) > 1:
+            max_w = min(effective_workers, len(pending))
+            with ProcessPoolExecutor(max_workers=max_w) as pool:
+                futures = [
+                    (
+                        idx,
+                        pdf,
+                        pool.submit(
+                            _convert_single_worker,
+                            str(pdf),
+                            str(output_dir),
+                            self.config,
+                        ),
+                    )
+                    for idx, pdf in pending
+                ]
+                for idx, pdf, fut in futures:
+                    target_md = output_dir / f"{pdf.stem}.md"
+                    res = fut.result()
+                    if res.status == "success":
+                        if res.manifest_entry is not None:
+                            precomputed_manifest[pdf.stem] = res.manifest_entry
+                        cache.record(pdf, target_md, self.config, figure_count=res.figure_count)
+                    results_by_idx[idx] = res
+                    if on_progress:
+                        on_progress(idx, total_files, pdf, res)
+        else:
+            for idx, pdf in pending:
+                target_md = output_dir / f"{pdf.stem}.md"
+                res = self.convert_file(pdf, output_dir, update_cache=False)
+                if res.status == "success":
+                    if res.manifest_entry is not None:
+                        precomputed_manifest[pdf.stem] = res.manifest_entry
+                    cache.record(pdf, target_md, self.config, figure_count=res.figure_count)
+                results_by_idx[idx] = res
+                if on_progress:
+                    on_progress(idx, total_files, pdf, res)
 
         cache.save()
 
@@ -225,4 +282,4 @@ class ScholarExtractor:
             manifest_path = output_dir / "scholarmark_manifest.json"
             generate_manifest(output_dir, manifest_path, precomputed=precomputed_manifest)
 
-        return results
+        return [results_by_idx[i] for i in range(1, total_files + 1)]

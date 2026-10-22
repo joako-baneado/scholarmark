@@ -1,7 +1,7 @@
 """
-Command Line Interface (CLI) for ScholarMark v3.0 using Rich.
+Command Line Interface (CLI) for ScholarMark v4.1 using Rich.
 Supports pluggable engines (auto, fast, vision, docling), hardware acceleration selection,
-canonical JSON export, and runtime diagnostics ('scholarmark doctor').
+multi-process batch workers, canonical JSON export, and runtime diagnostics ('scholarmark doctor').
 """
 
 import sys
@@ -85,6 +85,7 @@ def cli_batch(args):
         f"[bold]Output Directory:[/bold] {output_dir.resolve()}\n"
         f"[bold]PDF Count:[/bold] {len(pdf_files)} papers\n"
         f"[bold]Active Engine:[/bold] {active_engine.name} ({config.device})\n"
+        f"[bold]Parallel Workers:[/bold] {config.workers if config.workers > 0 else 'auto'}\n"
         f"[bold]Figure Extraction:[/bold] {'Enabled (' + str(args.dpi) + ' DPI)' if not args.no_images else 'Disabled'}\n"
         f"[bold]Canonical JSON:[/bold] {'Enabled' if config.export_json else 'Disabled'}\n"
         f"[bold]RAG Chunks JSONL:[/bold] {'Enabled' if config.export_chunks else 'Disabled'}\n"
@@ -279,7 +280,7 @@ def main():
     batch_parser.add_argument("--output", "-o", type=str, default="output", help="Output folder for Markdown & figures")
     batch_parser.add_argument("--force", "-f", action="store_true", help="Force reconversion of all files")
     batch_parser.add_argument("--skip-manifest", action="store_true", help="Skip manifest generation")
-    batch_parser.add_argument("--workers", type=int, default=1, help="Number of parallel worker processes")
+    batch_parser.add_argument("--workers", "-w", type=int, default=1, help="Number of parallel worker processes (0 for auto)")
     _add_common_extraction_flags(batch_parser)
 
     # Command: single

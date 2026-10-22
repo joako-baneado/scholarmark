@@ -274,3 +274,43 @@ def test_task3_1_direct_xref_raster_dump_and_adaptive_vector_dpi(tmp_path: Path)
     with Image.open(out_vec) as rendered_im:
         # At 200 DPI, width of 360 pt is 360 * (200 / 72) = 1000 px (whereas 300 DPI would be 1500 px)
         assert 995 <= rendered_im.width <= 1005
+
+
+def test_task3_2_multiprocess_batch_pool_race_free_manifest(tmp_path: Path):
+    import fitz
+    from scholarmark.extractor import ScholarExtractor
+
+    src_dir = tmp_path / "src_mp"
+    out_dir = tmp_path / "out_mp"
+    src_dir.mkdir()
+
+    for k in range(1, 5):
+        p = src_dir / f"paper_{k}.pdf"
+        doc = fitz.open()
+        pg = doc.new_page(width=595, height=842)
+        pg.insert_text(fitz.Point(55, 70), f"Paper {k}: High-Speed Pose Estimation", fontsize=13)
+        pg.insert_text(fitz.Point(55, 105), f"Our model {k} achieves {90 + k}.5% accuracy at {100 + k * 10} FPS [1].", fontsize=10)
+        pg.insert_text(fitz.Point(55, 145), "References", fontsize=12)
+        pg.insert_text(fitz.Point(55, 170), f'[1] Author {k}, "Fast Pose {k}," IEEE CVPR, 2026.', fontsize=9.5)
+        doc.save(str(p))
+        doc.close()
+
+    cfg = ExtractorConfig(engine="vision", workers=2, extract_images=False, export_json=False)
+    extractor = ScholarExtractor(config=cfg)
+    results = extractor.convert_batch(src_dir, out_dir)
+
+    assert len(results) == 4
+    assert all(r.status == "success" for r in results)
+
+    manifest_path = out_dir / "scholarmark_manifest.json"
+    assert manifest_path.exists()
+    manifest_data = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert manifest_data["total_papers"] == 4
+    for k in range(1, 5):
+        entry = manifest_data["documents"][f"paper_{k}"]
+        assert entry["references_count"] == 1
+        assert len(entry["grounded_claims"]) >= 1
+
+    # Second run should skip all 4 via DeltaCache recorded in parent process
+    results_cached = extractor.convert_batch(src_dir, out_dir)
+    assert all(r.status == "skipped" for r in results_cached)
