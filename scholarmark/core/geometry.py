@@ -464,3 +464,101 @@ def render_crop_300dpi(
         return True
     except Exception:
         return False
+
+
+def export_figure_asset(
+    page: fitz.Page,
+    bbox: BoundingBox,
+    destination: Path,
+    target_dpi: int = 300,
+    image_format: str = "png",
+    ctx: Optional[Any] = None,
+) -> bool:
+    """
+    Exporta una figura optimizando la ruta según su naturaleza geométrica:
+    1. Fast Path (XREF Stream Directo): Si la región corresponde a una imagen ráster pura
+       (IoU >= 0.85, xref > 0) sin trazos vectoriales ni texto superpuesto, extrae el stream
+       nativo del PDF sin invocar page.get_pixmap().
+    2. Adaptive Vector DPI: Si la figura es vectorial/híbrida, grande (area > 15,000 pt^2)
+       y carece de micro-texto (< 6.5 pt), escala a 200 DPI en lugar de 300 DPI (2.25x menos píxeles).
+    """
+    try:
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        clip_rect = bbox.to_fitz_rect()
+        page_w = float(page.rect.width)
+        page_h = float(page.rect.height)
+
+        image_boxes: List[Tuple[int, BoundingBox]] = (
+            ctx.image_boxes
+            if ctx is not None
+            else [
+                (int(img[0]), BoundingBox.from_fitz_rect(r))
+                for img in page.get_images()
+                for r in page.get_image_rects(img[0])
+            ]
+        )
+
+        matching_xrefs = [
+            (xref, ib)
+            for xref, ib in image_boxes
+            if xref > 0 and ib.iou(bbox) >= 0.85
+        ]
+
+        if len(matching_xrefs) == 1 and page.parent is not None:
+            xref = matching_xrefs[0][0]
+            drawings = ctx.drawings if ctx is not None else page.get_drawings()
+            has_vector_overlay = False
+            if drawings:
+                for d in drawings:
+                    dr = d.get("rect")
+                    if dr is None:
+                        continue
+                    if dr.width >= page_w * 0.92 or dr.height >= page_h * 0.92:
+                        continue
+                    if (dr.width >= 2.0 or dr.height >= 2.0) and clip_rect.intersects(dr):
+                        has_vector_overlay = True
+                        break
+
+            has_text_overlay = False
+            if not has_vector_overlay and ctx is not None:
+                clipped_words = ctx.clip_words(bbox)
+                if clipped_words:
+                    has_text_overlay = True
+
+            if not has_vector_overlay and not has_text_overlay:
+                img_dict = page.parent.extract_image(xref)
+                raw_bytes = img_dict.get("image") if img_dict else None
+                ext = (img_dict.get("ext", "") if img_dict else "").lower()
+                dest_ext = destination.suffix.lstrip(".").lower() or image_format.lower()
+                if raw_bytes:
+                    if ext == dest_ext or (ext in ("jpg", "jpeg") and dest_ext in ("jpg", "jpeg")):
+                        destination.write_bytes(raw_bytes)
+                        return True
+                    pix = fitz.Pixmap(page.parent, xref)
+                    if pix.alpha or pix.n > 4:
+                        pix = fitz.Pixmap(fitz.csRGB, pix)
+                    pix.save(str(destination))
+                    return True
+    except Exception:
+        pass
+
+    effective_dpi = target_dpi
+    if target_dpi >= 300 and bbox.area > 15000.0 and ctx is not None:
+        raw_sub = ctx.clip_rawdict(bbox)
+        span_sizes = [
+            float(s.get("size", 10.0))
+            for b in raw_sub.get("blocks", [])
+            for ln in b.get("lines", [])
+            for s in ln.get("spans", [])
+            if s.get("text", "").strip()
+        ]
+        if not span_sizes or min(span_sizes) >= 6.5:
+            effective_dpi = 200
+
+    return render_crop_300dpi(
+        page=page,
+        bbox=bbox,
+        destination=destination,
+        target_dpi=effective_dpi,
+        image_format=image_format,
+    )

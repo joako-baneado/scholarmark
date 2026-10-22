@@ -193,3 +193,84 @@ def test_task2_2_lazy_find_tables_gate_and_sla(tmp_path: Path):
     assert len(vis_tabs) == 1
     teds = teds_table_score(vis_tabs[0], gold_html, structure_only=False)
     assert teds == 1.0
+
+
+def test_task3_1_direct_xref_raster_dump_and_adaptive_vector_dpi(tmp_path: Path):
+    import io
+    import time
+    import fitz
+    from PIL import Image
+    from unittest.mock import patch
+    from scholarmark.core.geometry import export_figure_asset
+    from scholarmark.core.page_context import PageContext
+
+    # 1. Create a PDF with an embedded PNG raster image
+    img = Image.new("RGB", (240, 160), color=(40, 120, 200))
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    png_bytes = buf.getvalue()
+
+    pdf_raster = tmp_path / "raster_fig.pdf"
+    doc = fitz.open()
+    pg = doc.new_page(width=595, height=842)
+    img_rect = fitz.Rect(80, 100, 320, 260)
+    pg.insert_image(img_rect, stream=png_bytes)
+    pg.insert_text(fitz.Point(80, 280), "Fig. 1: Embedded RGB keyframe.", fontsize=10)
+    doc.save(str(pdf_raster))
+    doc.close()
+
+    out_png = tmp_path / "fig_raster.png"
+    with fitz.open(str(pdf_raster)) as d:
+        page = d[0]
+        ctx = PageContext.from_page(page, 1)
+        pixmap_calls = []
+        orig_get_pixmap = fitz.Page.get_pixmap
+
+        def tracked_pixmap(*args, **kwargs):
+            pixmap_calls.append(1)
+            return orig_get_pixmap(*args, **kwargs)
+
+        t0 = time.perf_counter()
+        with patch.object(fitz.Page, "get_pixmap", side_effect=tracked_pixmap):
+            ok = export_figure_asset(
+                page=page,
+                bbox=BoundingBox(80, 100, 320, 260),
+                destination=out_png,
+                target_dpi=300,
+                ctx=ctx,
+            )
+        elapsed_ms = (time.perf_counter() - t0) * 1000.0
+
+    assert ok is True
+    assert out_png.exists()
+    # Direct XREF dump does NOT call page.get_pixmap() and finishes in < 15 ms
+    assert len(pixmap_calls) == 0
+    assert elapsed_ms < 15.0
+
+    # 2. Create a large vector chart (>15,000 pt^2) with >= 9pt labels and verify adaptive 200 DPI scaling
+    pdf_vec = tmp_path / "vec_fig.pdf"
+    doc2 = fitz.open()
+    pg2 = doc2.new_page(width=595, height=842)
+    sh = pg2.new_shape()
+    sh.draw_rect(fitz.Rect(60, 100, 420, 300))  # 360 x 200 = 72,000 pt^2
+    sh.finish(color=(0.1, 0.2, 0.5), width=1.2)
+    sh.commit()
+    pg2.insert_text(fitz.Point(100, 150), "Accuracy (98.4%)", fontsize=10)
+    doc2.save(str(pdf_vec))
+    doc2.close()
+
+    out_vec = tmp_path / "fig_vec.png"
+    with fitz.open(str(pdf_vec)) as d2:
+        page2 = d2[0]
+        ctx2 = PageContext.from_page(page2, 1)
+        ok2 = export_figure_asset(
+            page=page2,
+            bbox=BoundingBox(60, 100, 420, 300),
+            destination=out_vec,
+            target_dpi=300,
+            ctx=ctx2,
+        )
+    assert ok2 is True
+    with Image.open(out_vec) as rendered_im:
+        # At 200 DPI, width of 360 pt is 360 * (200 / 72) = 1000 px (whereas 300 DPI would be 1500 px)
+        assert 995 <= rendered_im.width <= 1005

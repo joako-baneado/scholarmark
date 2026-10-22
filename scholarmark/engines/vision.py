@@ -15,7 +15,7 @@ from ..core.caption_matcher import (
     match_tables_to_captions,
 )
 from ..core.citations import CitationLinker
-from ..core.geometry import VisualElement, render_crop_300dpi
+from ..core.geometry import VisualElement, export_figure_asset
 from ..core.page_context import PageContext
 from ..ir.document import DocumentIR, PageIR, Block
 from ..layout import (
@@ -214,12 +214,13 @@ class VisionEngine(BaseEngine):
                 for f_idx, fb in enumerate(fig_blocks, 1):
                     filename = f"fig_p{page_num}_{f_idx}.png"
                     target_img = asset_dir / filename
-                    if render_crop_300dpi(
+                    if export_figure_asset(
                         page=page,
                         bbox=fb.bbox,
                         destination=target_img,
                         target_dpi=self.config.dpi,
                         image_format=self.config.image_format,
+                        ctx=ctx,
                     ):
                         fb.asset = filename
                         vector_fig_count += 1
