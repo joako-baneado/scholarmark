@@ -1,8 +1,8 @@
 """
-2D Mathematical Formula Recognizer for ScholarMark v3.0.
+2D Mathematical Formula Recognizer for ScholarMark v4.1.
 Recovers two-dimensional algebraic structure (fractions with vector division bars,
 nested subscripts/superscripts x_{i_k}^{n+1}, summation/integral limits, and matrices)
-from PDF spatial primitives + optional ONNX visual inference, with SHA-1 caching and
+from PDF spatial primitives via Single-Pass PageContext, with SHA-1 caching and
 KaTeX syntax validation.
 """
 
@@ -14,6 +14,7 @@ import fitz
 
 from ..core.geometry import BoundingBox
 from ..core.math_parser import clean_math_glyphs, sanitize_numeric_typography
+from ..core.page_context import PageContext
 
 
 _EQ_TAG_RE = re.compile(r"^\(\s*([0-9]+[a-zA-Z]?|[A-Z]\.[0-9]+)\s*\)$")
@@ -28,7 +29,6 @@ _UNICODE_BIG_OP_MAP = {
     "√": r"\sqrt",
 }
 
-# Mapeo de puntos de código PUA (Private Use Area U+E000..U+F8FF) comunes en fuentes TeX Type 1 / Symbol / CMEX
 _PUA_GLYPH_MAP = {
     "\ue000": r"\sum",
     "\ue001": r"\prod",
@@ -105,7 +105,6 @@ def sanitize_pua_text(text: str) -> Tuple[str, bool]:
                 or code >= 0xF0000
                 or (1 <= code < 32 and ch not in ("\t", "\n", "\r"))
             ):
-                # Ignorar glifo corrupto sin mapeo para evitar contaminar KaTeX
                 continue
             out_chars.append(ch)
     return "".join(out_chars), True
@@ -173,9 +172,6 @@ def _normalize_token_latex(raw_text: str) -> str:
 class FormulaRecognizer:
     """
     Reconocedor híbrido 2D de ecuaciones científicas.
-    Reconstruye fracciones vectoriales, sub/superíndices anidados, operadores con límites
-    y matrices directamente desde el árbol espacial de glifos y trazos del PDF, con reparación
-    de glifos PUA corruptos y soporte opcional para sesiones ONNX visuales.
     """
 
     def __init__(self, device: str = "auto", onnx_model_path: Optional[str] = None):
@@ -189,11 +185,15 @@ class FormulaRecognizer:
     def _extract_tokens_and_bars(
         page: fitz.Page,
         bbox: BoundingBox,
-        drawings: Optional[List[Dict[str, Any]]] = None
+        drawings: Optional[List[Dict[str, Any]]] = None,
+        ctx: Optional[PageContext] = None,
     ) -> Tuple[List[MathSpanToken], List[BoundingBox]]:
         """Extrae tokens con coordenadas a nivel de palabra/span y barras horizontales de fracción."""
         pad_box = bbox.pad(4.0, page.rect)
-        raw = page.get_text("rawdict", clip=pad_box.to_fitz_rect())
+        if ctx is not None:
+            raw = ctx.clip_rawdict(bbox, pad=4.0)
+        else:
+            raw = page.get_text("rawdict", clip=pad_box.to_fitz_rect())
 
         tokens: List[MathSpanToken] = []
         for b in raw.get("blocks", []):
@@ -204,7 +204,6 @@ class FormulaRecognizer:
                     sz = float(sp.get("size", 10.0))
                     chars = sp.get("chars", [])
                     if chars:
-                        # Agrupar caracteres contiguos con misma línea base y tamaño
                         cur_chars = []
                         cur_box: Optional[BoundingBox] = None
                         for ch in chars:
@@ -216,9 +215,8 @@ class FormulaRecognizer:
                                     cur_box = None
                                 continue
                             cb = BoundingBox(*[float(v) for v in ch["bbox"]])
-                            # Si es un operador delimitador o cambia drásticamente de posición, cortar token
                             if cur_chars and (c_str in "=+-(),[]" or cur_chars[-1] in "=+-(),[]"):
-                                tokens.append(MathSpanToken(".".join(cur_chars) if False else "".join(cur_chars), cur_box, sz))
+                                tokens.append(MathSpanToken("".join(cur_chars), cur_box, sz))
                                 cur_chars = [c_str]
                                 cur_box = cb
                             else:
@@ -232,7 +230,6 @@ class FormulaRecognizer:
                             sb = BoundingBox(*[float(v) for v in sp["bbox"]])
                             tokens.append(MathSpanToken(stxt, sb, sz))
 
-        # Deduplicar glifos superpuestos (fake-bold / doble trazado en PDFs TeX/Word)
         deduped_tokens: List[MathSpanToken] = []
         for tk in tokens:
             is_dup = False
@@ -248,10 +245,13 @@ class FormulaRecognizer:
         tokens = deduped_tokens
 
         if drawings is None:
-            try:
-                drawings = page.get_drawings()
-            except Exception:
-                drawings = []
+            if ctx is not None:
+                drawings = ctx.drawings
+            else:
+                try:
+                    drawings = page.get_drawings()
+                except Exception:
+                    drawings = []
 
         fraction_bars: List[BoundingBox] = []
         for d in drawings:
@@ -261,7 +261,6 @@ class FormulaRecognizer:
             db = BoundingBox.from_fitz_rect(r)
             if not pad_box.intersects(db):
                 continue
-            # Una barra de división es una línea horizontal fina (alto <= 2.8pt, ancho >= 6pt)
             if db.height <= 2.8 and 6.0 <= db.width <= (pad_box.width * 0.92):
                 fraction_bars.append(db)
 
@@ -279,7 +278,6 @@ class FormulaRecognizer:
         if not tokens:
             return ""
 
-        # 1. Comprobar si existen barras de fracción activas que dividan verticalmente subconjuntos de tokens
         valid_bars: List[Tuple[BoundingBox, List[MathSpanToken], List[MathSpanToken]]] = []
         for bar in sorted(bars, key=lambda b: b.width, reverse=True):
             num_toks = [
@@ -294,7 +292,6 @@ class FormulaRecognizer:
                 valid_bars.append((bar, num_toks, den_toks))
 
         if valid_bars:
-            # Tomar la barra principal más externa que no se solape conflictivamente
             main_bar, num_toks, den_toks = valid_bars[0]
             consumed_ids = {id(t) for t in num_toks} | {id(t) for t in den_toks}
             remaining_bars = [b for b in bars if b is not main_bar]
@@ -315,17 +312,18 @@ class FormulaRecognizer:
             parts = [p for p in (left_str, rf"\frac{{{num_str}}}{{{den_str}}}", right_str) if p]
             return " ".join(parts)
 
-        # 2. Detectar estructura matricial (múltiples filas x múltiples columnas sin barra de fracción)
         matrix_latex = self._try_reconstruct_matrix(tokens)
         if matrix_latex:
             return matrix_latex
 
-        # 3. Ordenar de izquierda a derecha y agrupar subíndices / superíndices / límites de operadores
+        multiline_latex = self._try_reconstruct_multiline_aligned(tokens, bars)
+        if multiline_latex:
+            return multiline_latex
+
         sorted_toks = sorted(tokens, key=lambda t: (round(t.bbox.x0, 1), round(t.bbox.y0, 1)))
         max_size = max(t.font_size for t in sorted_toks)
         base_Threshold_size = max_size * 0.86
 
-        # Identificar la línea base principal usando los tokens de tamaño normal
         main_toks = [t for t in sorted_toks if t.font_size >= base_Threshold_size]
         if not main_toks:
             main_toks = sorted_toks
@@ -340,7 +338,6 @@ class FormulaRecognizer:
             base_cy = base_t.cy
             base_h = max(4.0, base_t.bbox.height)
 
-            # Buscar tokens inmediatamente a la derecha (o encima/debajo para \sum, \int) que sean sub/superscripts
             j = i + 1
             sub_toks: List[MathSpanToken] = []
             sup_toks: List[MathSpanToken] = []
@@ -349,7 +346,6 @@ class FormulaRecognizer:
 
             while j < n:
                 cand = sorted_toks[j]
-                dx = cand.bbox.x0 - base_t.bbox.x1
                 horiz_overlap = not (cand.bbox.x1 < (base_t.bbox.x0 - 4.0) or cand.bbox.x0 > (base_t.bbox.x1 + 14.0))
                 dy = cand.cy - base_cy
                 is_smaller = cand.font_size < (base_t.font_size * 0.90)
@@ -362,8 +358,6 @@ class FormulaRecognizer:
                     j += 1
                     continue
 
-                # Para variables ordinarias: un sub/superíndice está pegado a la derecha (dx <= font_size * 0.85)
-                # y desplazado verticalmente hacia arriba (dy < 0) o hacia abajo (dy > 0)
                 last_x1 = max(
                     [base_t.bbox.x1]
                     + [t.bbox.x1 for t in sub_toks]
@@ -382,7 +376,6 @@ class FormulaRecognizer:
 
             piece = base_latex
             if sub_toks:
-                # Reconstruir recursivamente el subíndice (soporta anidamiento x_{i_k})
                 sub_str = self._reconstruct_sequence(sub_toks, [])
                 piece += f"_{{{sub_str}}}"
             if sup_toks:
@@ -400,12 +393,10 @@ class FormulaRecognizer:
         Detecta si un conjunto de tokens forma una matriz bidimensional (>= 2 filas y >= 2 columnas)
         y la serializa como \\begin{pmatrix} ... \\end{pmatrix}.
         """
-        # Ignorar paréntesis/corchetes delimitadores gigantes en los extremos izquierdo/derecho
         core = [t for t in tokens if t.text.strip() not in ("(", ")", "[", "]", "{", "}")]
-        if len(core) < 4:
+        if len(core) < 4 or any(t.text.strip() == "=" for t in core):
             return None
 
-        # Agrupar por filas según coordenada y
         core_sorted_y = sorted(core, key=lambda t: t.cy)
         rows: List[List[MathSpanToken]] = []
         for t in core_sorted_y:
@@ -421,7 +412,6 @@ class FormulaRecognizer:
         if min(col_counts) < 2 or max(col_counts) != min(col_counts):
             return None
 
-        # Verificar que las columnas estén alineadas verticalmente
         for r in rows:
             r.sort(key=lambda t: t.cx)
 
@@ -439,12 +429,145 @@ class FormulaRecognizer:
         body = r" \\ ".join(row_strs)
         return rf"\begin{{pmatrix}} {body} \end{{pmatrix}}"
 
+    def _try_reconstruct_multiline_aligned(
+        self,
+        tokens: List[MathSpanToken],
+        bars: List[BoundingBox],
+    ) -> Optional[str]:
+        """
+        Detecta bloques de ecuaciones multilínea (2+ líneas horizontales disjuntas en Y no separadas
+        por una barra de fracción) y los serializa como \\begin{aligned} ... \\\\ ... \\end{aligned}.
+        """
+        if len(tokens) < 4:
+            return None
+
+        max_size = max(t.font_size for t in tokens)
+        main_toks = [t for t in tokens if t.font_size >= (max_size * 0.85)]
+        if len(main_toks) < 4:
+            return None
+
+        main_sorted_y = sorted(main_toks, key=lambda t: t.cy)
+        bands: List[List[MathSpanToken]] = []
+        for t in main_sorted_y:
+            if not bands:
+                bands.append([t])
+            else:
+                prev_cy = sum(x.cy for x in bands[-1]) / len(bands[-1])
+                if (t.cy - prev_cy) > (max_size * 1.35):
+                    bands.append([t])
+                else:
+                    bands[-1].append(t)
+
+        if len(bands) < 2:
+            return None
+
+        # Si alguna barra de fracción separa dos bandas consecutivas, no es una ecuación multilínea independiente
+        band_cys = [sum(x.cy for x in b) / len(b) for b in bands]
+        for k in range(len(band_cys) - 1):
+            y_top, y_bot = band_cys[k], band_cys[k + 1]
+            for bar in bars:
+                bar_cy = (bar.y0 + bar.y1) * 0.5
+                if (y_top - 2.0) <= bar_cy <= (y_bot + 2.0):
+                    return None
+
+        # Requerir que cada banda tenga al menos 2 tokens principales
+        if any(len(b) < 2 for b in bands):
+            return None
+
+        full_bands: List[List[MathSpanToken]] = [[] for _ in bands]
+        for t in tokens:
+            best_k = min(range(len(band_cys)), key=lambda k: abs(t.cy - band_cys[k]))
+            full_bands[best_k].append(t)
+
+        band_bars: List[List[BoundingBox]] = [[] for _ in bands]
+        for bar in bars:
+            bar_cy = (bar.y0 + bar.y1) * 0.5
+            best_k = min(range(len(band_cys)), key=lambda k: abs(bar_cy - band_cys[k]))
+            band_bars[best_k].append(bar)
+
+        row_latex_list: List[str] = []
+        for k in range(len(bands)):
+            # Reconstruir cada línea de forma independiente
+            row_str = self._reconstruct_single_line(full_bands[k], band_bars[k]).strip()
+            if row_str:
+                row_latex_list.append(row_str)
+
+        if len(row_latex_list) < 2:
+            return None
+
+        has_equals = sum(1 for r in row_latex_list if "=" in r) >= 2
+        if has_equals:
+            row_latex_list = [r.replace("=", "&=", 1) if "=" in r else r for r in row_latex_list]
+
+        joined = r" \\ ".join(row_latex_list)
+        return rf"\begin{{aligned}} {joined} \end{{aligned}}"
+
+    def _reconstruct_single_line(
+        self,
+        tokens: List[MathSpanToken],
+        bars: List[BoundingBox],
+    ) -> str:
+        """Reconstruye una única línea de ecuación (con posibles fracciones internas y scripts)."""
+        if not tokens:
+            return ""
+        sorted_toks = sorted(tokens, key=lambda t: (round(t.bbox.x0, 1), round(t.bbox.y0, 1)))
+        out_parts: List[str] = []
+        i = 0
+        n = len(sorted_toks)
+        while i < n:
+            base_t = sorted_toks[i]
+            base_latex = _normalize_token_latex(base_t.text)
+            base_cy = base_t.cy
+            base_h = max(4.0, base_t.bbox.height)
+            j = i + 1
+            sub_toks: List[MathSpanToken] = []
+            sup_toks: List[MathSpanToken] = []
+            is_big_op = any(op in base_latex for op in _BIG_OPS)
+            while j < n:
+                cand = sorted_toks[j]
+                horiz_overlap = not (cand.bbox.x1 < (base_t.bbox.x0 - 4.0) or cand.bbox.x0 > (base_t.bbox.x1 + 14.0))
+                dy = cand.cy - base_cy
+                is_smaller = cand.font_size < (base_t.font_size * 0.90)
+                if is_big_op and horiz_overlap and abs(dy) > (base_h * 0.18):
+                    if dy < 0:
+                        sup_toks.append(cand)
+                    else:
+                        sub_toks.append(cand)
+                    j += 1
+                    continue
+                last_x1 = max(
+                    [base_t.bbox.x1]
+                    + [t.bbox.x1 for t in sub_toks]
+                    + [t.bbox.x1 for t in sup_toks]
+                )
+                if (cand.bbox.x0 - last_x1) <= max(6.0, base_t.font_size * 0.65) and (
+                    is_smaller or abs(dy) >= (base_h * 0.22)
+                ) and abs(dy) >= (base_h * 0.14):
+                    if dy < 0:
+                        sup_toks.append(cand)
+                    else:
+                        sub_toks.append(cand)
+                    j += 1
+                else:
+                    break
+            piece = base_latex
+            if sub_toks:
+                sub_str = self._reconstruct_single_line(sub_toks, [])
+                piece += f"_{{{sub_str}}}"
+            if sup_toks:
+                sup_str = self._reconstruct_single_line(sup_toks, [])
+                piece += f"^{{{sup_str}}}"
+            out_parts.append(piece)
+            i = j
+        return " ".join(out_parts)
+
     def recognize_region(
         self,
         page: fitz.Page,
         bbox: BoundingBox,
         fallback_text: str = "",
-        drawings: Optional[List[Dict[str, Any]]] = None
+        drawings: Optional[List[Dict[str, Any]]] = None,
+        ctx: Optional[PageContext] = None,
     ) -> Tuple[str, float, Optional[str]]:
         """
         Reconstruye la ecuación en la región dada y retorna (latex, confidence, tag).
@@ -457,7 +580,7 @@ class FormulaRecognizer:
             f"{page.number}:{round(bbox.x0,1)}:{round(bbox.y0,1)}:{round(bbox.x1,1)}:{round(bbox.y1,1)}:{fallback_text}".encode("utf-8")
         ).hexdigest()
 
-        tokens, bars = self._extract_tokens_and_bars(page, bbox, drawings=drawings)
+        tokens, bars = self._extract_tokens_and_bars(page, bbox, drawings=drawings, ctx=ctx)
         raw_concat = " ".join(t.text for t in tokens) + " " + (fallback_text or "")
         has_bad, bad_count = has_corrupted_glyphs(raw_concat)
         if has_bad:
@@ -475,7 +598,6 @@ class FormulaRecognizer:
             self._cache[cache_key] = res
             return res
 
-        # Separar etiqueta de numeración derecha ej. (1), (2a)
         tokens_sorted_x = sorted(tokens, key=lambda t: t.bbox.x0)
         tag: Optional[str] = None
         if len(tokens_sorted_x) >= 2:
@@ -485,7 +607,6 @@ class FormulaRecognizer:
                 tag = m.group(1)
                 tokens = [t for t in tokens if t is not rightmost]
             elif len(tokens_sorted_x) >= 4:
-                # Caso en que '(', '1', ')' son 3 tokens separados al extremo derecho
                 last3 = "".join(t.text.strip() for t in tokens_sorted_x[-3:])
                 m3 = _EQ_TAG_RE.match(last3)
                 if m3:

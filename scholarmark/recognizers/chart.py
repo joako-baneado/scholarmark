@@ -1,5 +1,5 @@
 """
-Chart-to-Metadata Semantic Extractor for ScholarMark v3.2.
+Chart-to-Metadata Semantic Extractor for ScholarMark v4.1.
 Extracts and classifies native vector text spans inside scientific figures and plots
 into axis_labels, legend_series, data_annotations, and tick_values so RAG pipelines
 can query quantitative figure contents without requiring a VLM at search time.
@@ -13,6 +13,7 @@ import fitz
 from ..core.caption_matcher import SUBPANEL_TAG_REGEX, CAPTION_REGEX
 from ..core.geometry import BoundingBox
 from ..core.math_parser import clean_math_glyphs, sanitize_numeric_typography
+from ..core.page_context import PageContext
 
 
 _AXIS_KEYWORD_RE = re.compile(
@@ -57,10 +58,14 @@ class ChartSemanticsExtractor:
     def extract_from_figure(
         page: fitz.Page,
         bbox: BoundingBox,
-        exclude_subpanels: Optional[List[str]] = None
+        exclude_subpanels: Optional[List[str]] = None,
+        ctx: Optional[PageContext] = None,
     ) -> ChartSemantics:
-        clip = bbox.pad(4.0, page.rect).to_fitz_rect()
-        raw = page.get_text("dict", clip=clip)
+        if ctx is not None:
+            raw = ctx.clip_rawdict(bbox, pad=4.0)
+        else:
+            clip = bbox.pad(4.0, page.rect).to_fitz_rect()
+            raw = page.get_text("dict", clip=clip)
 
         excluded: Set[str] = {s.strip().lower() for s in (exclude_subpanels or []) if s}
         fig_w = max(1.0, bbox.width)
@@ -90,18 +95,15 @@ class ChartSemanticsExtractor:
                 if not clean_txt or len(clean_txt) > 90:
                     continue
 
-                # Ignorar leyendas completas Fig. X o etiquetas de subpaneles (a), (b)
                 if CAPTION_REGEX.match(clean_txt) or SUBPANEL_TAG_REGEX.fullmatch(clean_txt):
                     continue
                 if clean_txt.lower() in excluded:
                     continue
 
-                # Posición relativa dentro del bbox de la figura [0.0 .. 1.0]
                 rel_x = ((lb.x0 + lb.x1) * 0.5 - bbox.x0) / fig_w
                 rel_y = ((lb.y0 + lb.y1) * 0.5 - bbox.y0) / fig_h
                 near_perimeter = rel_x <= 0.22 or rel_y >= 0.78 or rel_y <= 0.14
 
-                # 1. Valores puramente numéricos o con unidad pegada
                 if _NUMERIC_VALUE_RE.match(clean_txt):
                     has_unit_or_decimal = ("." in clean_txt) or any(u in clean_txt.lower() for u in ("%", "ms", "fps", "db", "mm"))
                     if near_perimeter and not has_unit_or_decimal:
@@ -117,15 +119,12 @@ class ChartSemanticsExtractor:
                     continue
                 seen.add(key_lower)
 
-                # 2. Etiquetas de ejes X / Y (por palabras clave de magnitud/unidad)
                 if _AXIS_KEYWORD_RE.search(clean_txt):
                     if len(clean_txt.split()) <= 6:
                         axis_labels.append(clean_txt)
                 elif len(clean_txt.split()) <= 4 and len(clean_txt) >= 2:
-                    # 3. Series de leyenda / nombres de modelos o barras comparadas
                     legend_series.append(clean_txt)
 
-        # Solo conservar legend_series si el gráfico también tiene ejes o valores numéricos reales
         if not axis_labels and not data_annotations and not tick_values:
             legend_series = []
 

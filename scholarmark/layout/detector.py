@@ -1,10 +1,10 @@
 """
-Visual & Multimodal Document Layout Detector for ScholarMark v3.0.
+Visual & Multimodal Document Layout Detector for ScholarMark v4.1.
 Classifies page regions into structural classes:
 title, section_header, text, list, footnote, abandon, formula, table, table_caption,
 figure, figure_caption, and author_bio.
 Supports custom ONNX layout models (DocLayout-YOLO / PP-DocLayout) and a zero-download
-multimodal geometric+typographic layout analyzer.
+multimodal geometric+typographic layout analyzer over Single-Pass PageContext.
 """
 
 from dataclasses import dataclass, field
@@ -24,6 +24,7 @@ from ..core.geometry import (
     cluster_vector_drawings,
     expand_figure_bbox,
 )
+from ..core.page_context import PageContext
 from ..models.registry import resolve_ort_providers
 from ..recognizers.algorithm import AlgorithmRecognizer, ALGORITHM_HEADER_RE
 
@@ -61,7 +62,7 @@ class LayoutRegion:
 
 class LayoutDetector:
     """
-    Detector de maquetación híbrido de ScholarMark v3.0.
+    Detector de maquetación híbrido de ScholarMark v4.1.
     Si se proporciona un archivo ONNX válido, ejecuta inferencia con ONNX Runtime;
     además fusiona y refina con introspección tipográfica y geométrica de la página.
     """
@@ -108,10 +109,21 @@ class LayoutDetector:
         return rules
 
     @staticmethod
-    def _detect_small_portrait_images(page: fitz.Page) -> List[BoundingBox]:
+    def _detect_small_portrait_images(
+        page: fitz.Page,
+        image_boxes: Optional[List[Tuple[int, BoundingBox]]] = None,
+    ) -> List[BoundingBox]:
         """Detecta fotografías pequeñas de autores en los márgenes (típicas de biografías IEEE)."""
         portraits: List[BoundingBox] = []
         page_area = max(1.0, page.rect.width * page.rect.height)
+        if image_boxes is not None:
+            for _, ib in image_boxes:
+                area_ratio = (ib.width * ib.height) / page_area
+                aspect = ib.height / max(1.0, ib.width)
+                if 0.005 <= area_ratio <= 0.08 and 0.8 <= aspect <= 1.8:
+                    portraits.append(ib)
+            return portraits
+
         try:
             for img in page.get_images():
                 xref = img[0]
@@ -156,6 +168,7 @@ class LayoutDetector:
         table_captions: List[BoundingBox],
         raw_blocks: List[Dict[str, Any]],
         figure_captions: Optional[List[BoundingBox]] = None,
+        image_boxes: Optional[List[Tuple[int, BoundingBox]]] = None,
     ) -> List[BoundingBox]:
         """
         Detecta regiones de tablas combinando el buscador de tablas de PyMuPDF
@@ -177,17 +190,7 @@ class LayoutDetector:
             )
             return near_fig_cap and not near_tab_cap
 
-        # 1. PyMuPDF find_tables nativo si está disponible
-        try:
-            finder = page.find_tables()
-            for tab in getattr(finder, "tables", []):
-                tb = BoundingBox(*tab.bbox)
-                if tb.area >= 1200.0 and not _is_above_figure_caption_without_table_caption(tb):
-                    table_boxes.append(tb)
-        except Exception:
-            pass
-
-        # 2. Detección de tablas abiertas (booktabs) mediante pares/tríos de líneas horizontales de igual ancho
+        # 1. Detección rápida de tablas abiertas (booktabs) mediante pares/tríos de líneas horizontales de igual ancho
         wide_rules = [r for r in rules if r.width >= 100.0]
         wide_rules.sort(key=lambda r: r.y0)
         i = 0
@@ -196,7 +199,6 @@ class LayoutDetector:
             matched_bottom = None
             for j in range(i + 1, len(wide_rules)):
                 r_cand = wide_rules[j]
-                # Misma banda horizontal X y separación vertical razonable de tabla (25 a 500 pt)
                 if (
                     abs(r_cand.x0 - r_top.x0) <= 25.0
                     and abs(r_cand.x1 - r_top.x1) <= 25.0
@@ -219,7 +221,7 @@ class LayoutDetector:
             else:
                 i += 1
 
-        # 3. Rescate guiado por table_caption cuando una tabla sin bordes está justo debajo del título 'Table X'
+        # 2. Rescate guiado por table_caption cuando una tabla sin bordes o ráster está debajo del título 'Table X'
         for tc in table_captions:
             has_near_table = any(
                 (abs(tb.y0 - tc.y1) < 45.0 or abs(tc.y0 - tb.y1) < 45.0)
@@ -227,7 +229,6 @@ class LayoutDetector:
             )
             if has_near_table:
                 continue
-            # Buscar bloques alineados con alta densidad numérica inmediatamente debajo de tc
             aligned_blocks: List[BoundingBox] = []
             for b in raw_blocks:
                 if b.get("type") != 0:
@@ -240,7 +241,7 @@ class LayoutDetector:
                         for s in ln.get("spans", [])
                     )
                     digits = sum(1 for c in txt if c.isdigit())
-                    if digits >= 4 and len( b.get("lines", []) ) >= 2:
+                    if digits >= 4 and len(b.get("lines", [])) >= 2:
                         aligned_blocks.append(bb)
             if aligned_blocks:
                 u = aligned_blocks[0]
@@ -249,21 +250,48 @@ class LayoutDetector:
                 if u.height >= 20.0 and u.width <= page_w and u.height <= page_h:
                     table_boxes.append(u)
             else:
-                # 4. Rescate de tablas ráster (imagen incrustada inmediatamente debajo de Table X:)
-                try:
-                    for img in page.get_images():
-                        xref = img[0]
-                        for r in page.get_image_rects(xref):
-                            ib = BoundingBox.from_fitz_rect(r)
-                            if (
-                                ib.width >= 60.0
-                                and ib.height >= 30.0
-                                and -5.0 <= (ib.y0 - tc.y1) <= 45.0
-                                and not (ib.x1 < tc.x0 - 20.0 or ib.x0 > tc.x1 + 20.0)
-                            ):
-                                table_boxes.append(ib)
-                except Exception:
-                    pass
+                # Rescate de tablas ráster (imagen incrustada inmediatamente debajo de Table X:)
+                candidates = (
+                    [ib for _, ib in image_boxes]
+                    if image_boxes is not None
+                    else [
+                        BoundingBox.from_fitz_rect(r)
+                        for img in page.get_images()
+                        for r in page.get_image_rects(img[0])
+                    ]
+                )
+                for ib in candidates:
+                    if (
+                        ib.width >= 60.0
+                        and ib.height >= 30.0
+                        and -5.0 <= (ib.y0 - tc.y1) <= 45.0
+                        and not (ib.x1 < tc.x0 - 20.0 or ib.x0 > tc.x1 + 20.0)
+                    ):
+                        table_boxes.append(ib)
+
+        # 3. Lazy Gate: invocar page.find_tables() solo si quedan leyendas Table X sin resolver
+        #    o reglas anchas no cubiertas por las heurísticas rápidas
+        has_unresolved_caption = any(
+            not any(abs(tb.y0 - tc.y1) < 45.0 or abs(tc.y0 - tb.y1) < 45.0 for tb in table_boxes)
+            for tc in table_captions
+        )
+        unmatched_wide_rules = [
+            r for r in wide_rules
+            if not any(tb.pad(6.0, page.rect).intersects(r) for tb in table_boxes)
+        ]
+        if has_unresolved_caption or len(unmatched_wide_rules) >= 3:
+            try:
+                finder = page.find_tables()
+                for tab in getattr(finder, "tables", []):
+                    tb = BoundingBox(*tab.bbox)
+                    if (
+                        tb.area >= 1200.0
+                        and not _is_above_figure_caption_without_table_caption(tb)
+                        and not any(tb.iou(existing) > 0.4 for existing in table_boxes)
+                    ):
+                        table_boxes.append(tb)
+            except Exception:
+                pass
 
         return table_boxes
 
@@ -292,32 +320,29 @@ class LayoutDetector:
         max_page_primitives: int = 20000,
         max_figure_primitives: int = 2000,
         elastic_min: float = 4.0,
-        elastic_max: float = 16.0
+        elastic_max: float = 16.0,
+        ctx: Optional[PageContext] = None,
     ) -> List[LayoutRegion]:
         """
         Segmenta y clasifica todos los elementos estructurales de la página.
         """
-        page_w = float(page.rect.width)
-        page_h = float(page.rect.height)
-        raw_dict = page.get_text("dict")
+        if ctx is None:
+            ctx = PageContext.from_page(page, page_num, max_primitives=max_page_primitives)
+
+        page_w = ctx.width
+        page_h = ctx.height
+        raw_dict = ctx.raw_dict
         raw_blocks = raw_dict.get("blocks", [])
         body_size = self._estimate_body_font_size(raw_dict)
-
-        try:
-            bboxlog = page.get_bboxlog()
-        except Exception:
-            bboxlog = []
-
-        drawings = page.get_drawings() if len(bboxlog) <= max_page_primitives else []
-        words = page.get_text("words")
+        drawings = ctx.drawings
+        words = ctx.words
         rules = self._detect_horizontal_rules(drawings, page_w)
-        portraits = self._detect_small_portrait_images(page)
+        portraits = self._detect_small_portrait_images(page, image_boxes=ctx.image_boxes)
 
         regions: List[LayoutRegion] = []
         table_caption_boxes: List[BoundingBox] = []
         figure_caption_boxes: List[BoundingBox] = []
 
-        # Primera pasada sobre bloques textuales para identificar captions, abandon, títulos, notas al pie
         prelim_text_blocks: List[Tuple[BoundingBox, str, List[Dict[str, Any]], float]] = []
         for b in raw_blocks:
             if b.get("type") != 0:
@@ -342,7 +367,7 @@ class LayoutDetector:
             elif CAPTION_REGEX.search(clean_single):
                 figure_caption_boxes.append(bb)
 
-        # Detectar bloques de Algoritmos y Pseudocódigo antes de tablas (evita confusión con reglas horizontales)
+        # Detectar bloques de Algoritmos y Pseudocódigo antes de tablas
         algorithm_boxes: List[BoundingBox] = []
         consumed_by_algorithm: set[int] = set()
         idx_b = 0
@@ -373,13 +398,14 @@ class LayoutDetector:
             else:
                 idx_b += 1
 
-        # Detectar regiones de tablas (excluyendo cajas de algoritmos y gráficos vectoriales con Fig. X:)
+        # Detectar regiones de tablas
         raw_table_boxes = self._detect_table_regions(
             page,
             rules,
             table_caption_boxes,
             raw_blocks,
             figure_captions=figure_caption_boxes,
+            image_boxes=ctx.image_boxes,
         )
         table_boxes = [
             tb for tb in raw_table_boxes
@@ -388,39 +414,34 @@ class LayoutDetector:
         for tb in table_boxes:
             regions.append(LayoutRegion(kind="table", bbox=tb, confidence=0.92, source="model"))
 
-        # Detectar figuras ráster y vectoriales (excluyendo retratos diminutos de biografías y tablas)
+        # Detectar figuras ráster y vectoriales
         bio_text_boxes = [
             bb for (bb, txt, _, _) in prelim_text_blocks
             if _BIO_CUE_RE.search(" ".join(txt.split()))
         ]
         figure_boxes: List[BoundingBox] = []
-        try:
-            for img in page.get_images():
-                xref = img[0]
-                for r in page.get_image_rects(xref):
-                    ib = BoundingBox.from_fitz_rect(r)
-                    if ib.width >= 35.0 and ib.height >= 35.0:
-                        if any(ib.iou(tb) > 0.4 or ib.coverage_by(tb) > 0.6 for tb in table_boxes):
-                            continue
-                        is_portrait = any(ib.iou(p) > 0.65 for p in portraits)
-                        near_bio = any(
-                            abs(p_bio.y0 - ib.y0) < 85.0 and abs(p_bio.x0 - ib.x1) < 55.0
-                            for p_bio in bio_text_boxes
-                        )
-                        near_fig_cap = any(
-                            abs(fc.y0 - ib.y1) < 55.0 or abs(ib.y0 - fc.y1) < 55.0
-                            for fc in figure_caption_boxes
-                        )
-                        if is_portrait and (near_bio or not near_fig_cap):
-                            continue
-                        figure_boxes.append(ib)
-        except Exception:
-            pass
+        for _, ib in ctx.image_boxes:
+            if ib.width >= 35.0 and ib.height >= 35.0:
+                if any(ib.iou(tb) > 0.4 or ib.coverage_by(tb) > 0.6 for tb in table_boxes):
+                    continue
+                is_portrait = any(ib.iou(p) > 0.65 for p in portraits)
+                near_bio = any(
+                    abs(p_bio.y0 - ib.y0) < 85.0 and abs(p_bio.x0 - ib.x1) < 55.0
+                    for p_bio in bio_text_boxes
+                )
+                near_fig_cap = any(
+                    abs(fc.y0 - ib.y1) < 55.0 or abs(ib.y0 - fc.y1) < 55.0
+                    for fc in figure_caption_boxes
+                )
+                if is_portrait and (near_bio or not near_fig_cap):
+                    continue
+                figure_boxes.append(ib)
 
         vec_clusters = cluster_vector_drawings(
             page=page,
-            drawings=drawings if drawings else None,
+            drawings=drawings if drawings else [],
             max_page_primitives=max_page_primitives,
+            bboxlog=ctx.bboxlog,
         )
         prose_candidates = [
             bb for (bb, txt, _, _) in prelim_text_blocks
@@ -433,7 +454,7 @@ class LayoutDetector:
                 page=page,
                 figure_bbox=vb,
                 bleed_padding=elastic_min,
-                drawings=drawings if drawings else None,
+                drawings=drawings if drawings else [],
                 words=words,
                 prose_blocks=prose_candidates,
                 max_vector_primitives=max_figure_primitives,
@@ -444,7 +465,6 @@ class LayoutDetector:
             figure_boxes.append(refined)
 
         for fb in figure_boxes:
-            # Extraer etiquetas de subpaneles (a), (b) dentro o en el borde de la figura
             panel_tags: List[str] = []
             for w in words:
                 wb = BoundingBox(float(w[0]), float(w[1]), float(w[2]), float(w[3]))
@@ -460,13 +480,13 @@ class LayoutDetector:
                 metadata={"subpanel_labels": panel_tags},
             ))
 
-        # Detectar separadores de notas al pie en el tercio inferior de la página
+        # Detectar separadores de notas al pie
         footnote_rule_y = None
         for rl in rules:
             if rl.y0 > (page_h * 0.62) and 35.0 <= rl.width <= (page_w * 0.48):
                 footnote_rule_y = min(footnote_rule_y, rl.y0) if footnote_rule_y else rl.y0
 
-        # Fusionar bandas de ecuaciones 2D fragmentadas (ej. numerador, denominador y tag '(1)' en bloques separados)
+        # Fusionar bandas de ecuaciones 2D fragmentadas
         consumed_by_formula: set[int] = set()
         for idx_tag, (bb_tag, txt_tag, _, _) in enumerate(prelim_text_blocks):
             if idx_tag in consumed_by_algorithm:
@@ -497,11 +517,9 @@ class LayoutDetector:
                     metadata={"tag": eq_num},
                 ))
 
-        # Clasificar los bloques textuales que no caen dentro de tablas, figuras, algoritmos ni bandas de ecuación
         for b_idx, (bb, text, spans, max_sz) in enumerate(prelim_text_blocks):
             if b_idx in consumed_by_formula or b_idx in consumed_by_algorithm:
                 continue
-            # Si ya está absorbido por una tabla o algoritmo detectado, lo manejará su reconocedor
             if any(bb.coverage_by(tb) > 0.65 for tb in table_boxes) or any(bb.coverage_by(ab) > 0.65 for ab in algorithm_boxes):
                 continue
 
@@ -521,11 +539,11 @@ class LayoutDetector:
                 regions.append(LayoutRegion(kind="figure_caption", bbox=bb, confidence=0.96))
                 continue
 
-            # 3. Si es texto pequeño dentro de una figura (ej. etiquetas de diagrama), ignorar como bloque suelto
+            # 3. Texto pequeño dentro de una figura
             if any(bb.coverage_by(fb) > 0.75 for fb in figure_boxes) and len(clean_single) < 80:
                 continue
 
-            # 4. Título del artículo en página 1 (excluyendo encabezados numerados o secciones canónicas)
+            # 4. Título del artículo en página 1
             if (
                 page_num == 1
                 and bb.y0 < (page_h * 0.35)
@@ -537,7 +555,7 @@ class LayoutDetector:
                 regions.append(LayoutRegion(kind="title", bbox=bb, confidence=0.95))
                 continue
 
-            # 5. Biografías de autores (IEEE Transactions) — evaluar antes de footnote porque usan fuente de 8–8.5pt al final de página
+            # 5. Biografías de autores (IEEE Transactions)
             has_nearby_portrait = any(
                 abs(p.y0 - bb.y0) < 60.0 and abs(p.x1 - bb.x0) < 45.0
                 for p in portraits
@@ -546,13 +564,13 @@ class LayoutDetector:
                 regions.append(LayoutRegion(kind="author_bio", bbox=bb, confidence=0.90))
                 continue
 
-            # 6. Notas al pie (footnote) en la parte inferior de la columna/página
+            # 6. Notas al pie (footnote)
             is_near_bottom = bb.y0 > (page_h * 0.72) or (footnote_rule_y is not None and bb.y0 >= (footnote_rule_y - 4.0))
             if is_near_bottom and (max_sz <= (body_size * 0.92) or _FOOTNOTE_START_RE.search(clean_single)):
                 regions.append(LayoutRegion(kind="footnote", bbox=bb, confidence=0.90))
                 continue
 
-            # 7. Ecuaciones aisladas (isolate_formula)
+            # 7. Ecuaciones aisladas
             is_eq, eq_tag = self._is_math_heavy_block(text, spans)
             if is_eq:
                 regions.append(LayoutRegion(

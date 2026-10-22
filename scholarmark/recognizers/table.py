@@ -1,8 +1,9 @@
 """
-Hierarchical Semantic HTML & GFM Table Recognizer for ScholarMark v3.0.
+Hierarchical Semantic HTML & GFM Table Recognizer for ScholarMark v4.1.
 Recovers complex scientific tables including LaTeX booktabs (no vertical lines),
 multi-level headers with colspan/rowspan, and rotated landscape pages (/Rotate 90),
-populating cell text strictly from native vector PDF coordinates (0.0% hallucination).
+populating cell text strictly from native vector PDF coordinates (0.0% hallucination)
+via Single-Pass PageContext.
 """
 
 import html
@@ -11,6 +12,7 @@ import fitz
 
 from ..core.geometry import BoundingBox
 from ..core.math_parser import clean_math_glyphs, sanitize_numeric_typography
+from ..core.page_context import PageContext
 
 
 def _clean_cell_text(text: str) -> str:
@@ -22,8 +24,6 @@ def _clean_cell_text(text: str) -> str:
 class TableRecognizer:
     """
     Reconstructor de estructura lógica de tablas científicas.
-    Combina agrupación espacial de celdas, detección de columnas por proyección de espacios en blanco
-    (booktabs) e inferencia de celdas combinadas (colspan / rowspan), emitiendo HTML semántico y GFM.
     """
 
     def __init__(self, device: str = "auto", onnx_model_path: Optional[str] = None):
@@ -65,7 +65,6 @@ class TableRecognizer:
         self.last_fallback_triggered = True
         clip = bbox.pad(2.0, page.rect).to_fitz_rect()
 
-        # 1. Intentar OCR nativo de PyMuPDF sobre el recorte si Tesseract está disponible
         try:
             tp = page.get_textpage_ocr(flags=0, dpi=200, full=False, clip=clip)
             ocr_words = page.get_text("words", textpage=tp, clip=clip)
@@ -101,53 +100,62 @@ class TableRecognizer:
         except Exception:
             pass
 
-        # 2. Proyección de perfiles morfológicos sobre el mapa de bits en escala de grises
         try:
             import numpy as np
             pix = page.get_pixmap(clip=clip, dpi=150, colorspace=fitz.csGRAY, alpha=False)
-            arr = np.frombuffer(pix.samples, dtype=np.uint8).reshape(pix.height, pix.width)
-            dark = (arr < 215).astype(np.float32)
+            if pix.height >= 4 and pix.width >= 4:
+                arr = np.frombuffer(pix.samples, dtype=np.uint8).reshape(pix.height, pix.width)
+                dark = (arr < 215).astype(np.float32)
 
-            # Ignorar líneas horizontales o verticales completas (> 75% de ancho/alto) para aislar texto de celdas
-            row_mask = np.mean(dark, axis=1) < 0.75
-            col_mask = np.mean(dark, axis=0) < 0.75
-            clean_dark = dark * row_mask[:, None] * col_mask[None, :]
+                row_mask = np.mean(dark, axis=1) < 0.75
+                col_mask = np.mean(dark, axis=0) < 0.75
+                clean_dark = dark * row_mask[:, None] * col_mask[None, :]
 
-            row_segments = self._detect_band_segments(np.mean(clean_dark, axis=1), threshold=0.012, min_span=4)
-            col_segments = self._detect_band_segments(np.mean(clean_dark, axis=0), threshold=0.012, min_span=6)
+                row_segments = self._detect_band_segments(np.mean(clean_dark, axis=1), threshold=0.012, min_span=4)
+                col_segments = self._detect_band_segments(np.mean(clean_dark, axis=0), threshold=0.012, min_span=6)
 
-            num_rows = max(2, min(12, len(row_segments)))
-            num_cols = max(2, min(8, len(col_segments)))
+                num_rows = max(2, min(12, len(row_segments)))
+                num_cols = max(2, min(8, len(col_segments)))
+            else:
+                num_rows, num_cols = 2, 2
         except Exception:
             num_rows, num_cols = 2, 2
 
-        html_lines = [f'<table data-source="raster-fallback" data-rows="{num_rows}" data-cols="{num_cols}">']
-        hdr_cells = "".join(f"<th>Col {c + 1}</th>" for c in range(num_cols))
+        html_lines = [
+            f'<!-- Raster table detected ({num_rows}x{num_cols}): native text spans unavailable -->',
+            f'<table data-source="raster-fallback" data-rows="{num_rows}" data-cols="{num_cols}">',
+        ]
+        hdr_cells = "".join("<th></th>" for _ in range(num_cols))
         html_lines.append(f"  <tr>{hdr_cells}</tr>")
-        for r in range(1, num_rows):
-            row_cells = "".join(f"<td>[R{r}C{c + 1}]</td>" for c in range(num_cols))
+        for _ in range(1, num_rows):
+            row_cells = "".join("<td></td>" for _ in range(num_cols))
             html_lines.append(f"  <tr>{row_cells}</tr>")
         html_lines.append("</table>")
 
-        gfm_hdr = "| " + " | ".join(f"Col {c + 1}" for c in range(num_cols)) + " |"
+        gfm_hdr = "| " + " | ".join("" for _ in range(num_cols)) + " |"
         gfm_sep = "| " + " | ".join(["---"] * num_cols) + " |"
         gfm_body = [
-            "| " + " | ".join(f"[R{r}C{c + 1}]" for c in range(num_cols)) + " |"
-            for r in range(1, num_rows)
+            "| " + " | ".join("" for _ in range(num_cols)) + " |"
+            for _ in range(1, num_rows)
         ]
         return "\n".join(html_lines), "\n".join([gfm_hdr, gfm_sep] + gfm_body), False
 
     @staticmethod
     def _extract_word_clusters_by_row(
         page: fitz.Page,
-        bbox: BoundingBox
+        bbox: BoundingBox,
+        ctx: Optional[PageContext] = None,
     ) -> List[List[Tuple[BoundingBox, str]]]:
         """
-        Extrae palabras nativas dentro del bbox de la tabla (aplicando corrección si la página
-        está rotada) y las agrupa en filas y celdas horizontales contiguas.
+        Extrae palabras nativas dentro del bbox de la tabla (usando PageContext en memoria
+        si está disponible) y las agrupa en filas y celdas horizontales contiguas.
         """
-        clip = bbox.pad(2.0, page.rect).to_fitz_rect()
-        words = page.get_text("words", clip=clip)
+        if ctx is not None:
+            words = ctx.clip_words(bbox, pad=2.0)
+        else:
+            clip = bbox.pad(2.0, page.rect).to_fitz_rect()
+            words = page.get_text("words", clip=clip)
+
         if not words:
             return []
 
@@ -158,7 +166,6 @@ class TableRecognizer:
             if not txt:
                 continue
             if rotation in (90, 270):
-                # En páginas rotadas, usar derotación para proyectar filas y columnas en orden de lectura
                 pt0 = fitz.Point(wx0, wy0) * page.derotation_matrix
                 pt1 = fitz.Point(wx1, wy1) * page.derotation_matrix
                 wb = BoundingBox(min(pt0.x, pt1.x), min(pt0.y, pt1.y), max(pt0.x, pt1.x), max(pt0.y, pt1.y))
@@ -166,7 +173,6 @@ class TableRecognizer:
                 wb = BoundingBox(wx0, wy0, wx1, wy1)
             items.append((wb, txt))
 
-        # 1. Agrupar palabras en filas lógicas por solapamiento vertical (y)
         items.sort(key=lambda it: ((it[0].y0 + it[0].y1) * 0.5, it[0].x0))
         raw_rows: List[List[Tuple[BoundingBox, str]]] = []
         for wb, txt in items:
@@ -183,7 +189,6 @@ class TableRecognizer:
             if not placed:
                 raw_rows.append([(wb, txt)])
 
-        # 2. Dentro de cada fila, fusionar palabras separadas por <= 9 pt en una sola celda de texto
         cell_rows: List[List[Tuple[BoundingBox, str]]] = []
         for r in raw_rows:
             r.sort(key=lambda it: it[0].x0)
@@ -204,10 +209,6 @@ class TableRecognizer:
 
     @staticmethod
     def _infer_column_anchors(cell_rows: List[List[Tuple[BoundingBox, str]]]) -> List[Tuple[float, float]]:
-        """
-        Determina los intervalos horizontales [x0, x1] de las columnas base a partir de las
-        filas de mayor granularidad (típicamente las filas de datos o sub-encabezados).
-        """
         if not cell_rows:
             return []
 
@@ -227,14 +228,15 @@ class TableRecognizer:
     def recognize_table(
         self,
         page: fitz.Page,
-        bbox: BoundingBox
+        bbox: BoundingBox,
+        ctx: Optional[PageContext] = None,
     ) -> Tuple[str, Optional[str], bool]:
         """
         Extrae la estructura de la tabla en la región dada y retorna:
         (html_table, gfm_table_or_none, has_merged_cells).
         """
         self.last_fallback_triggered = False
-        cell_rows = self._extract_word_clusters_by_row(page, bbox)
+        cell_rows = self._extract_word_clusters_by_row(page, bbox, ctx=ctx)
         if not cell_rows:
             return self._reconstruct_raster_table(page, bbox)
 
@@ -243,7 +245,6 @@ class TableRecognizer:
         if num_cols == 0:
             return self._reconstruct_raster_table(page, bbox)
 
-        # Mapear cada celda de cada fila a las columnas base que cubre (detección de colspan)
         structured_rows: List[List[Dict[str, Any]]] = []
         has_merged = False
 
@@ -252,7 +253,6 @@ class TableRecognizer:
             occupied_cols = set()
 
             for c_box, c_txt in row:
-                # Encontrar todas las columnas base con las que esta celda se solapa o cuyo centro cae dentro
                 spanned: List[int] = []
                 for col_i, (ax0, ax1) in enumerate(col_anchors):
                     if col_i in occupied_cols:
@@ -263,7 +263,6 @@ class TableRecognizer:
                         spanned.append(col_i)
 
                 if not spanned:
-                    # Asignar a la columna libre más cercana por distancia de centros
                     c_center = (c_box.x0 + c_box.x1) * 0.5
                     free_cols = [ci for ci in range(num_cols) if ci not in occupied_cols]
                     if free_cols:
@@ -288,9 +287,6 @@ class TableRecognizer:
             mapped_row.sort(key=lambda item: item["col_start"])
             structured_rows.append(mapped_row)
 
-        # Detectar encabezado jerárquico de 2 niveles (colspan y rowspan):
-        # Si la fila 0 tiene menos celdas que num_cols y la fila 1 subdivide las columnas derechas,
-        # expandir el colspan de las celdas agrupadoras de la fila 0 y el rowspan de las columnas fijas.
         header_row_count = 1
         if len(structured_rows) >= 3:
             row0 = structured_rows[0]
@@ -312,14 +308,12 @@ class TableRecognizer:
                         c0["rowspan"] = 2
                         has_merged = True
 
-        # Construir HTML semántico
         html_lines = ["<table>"]
         for r_idx, m_row in enumerate(structured_rows):
             is_header = r_idx < header_row_count
             tag = "th" if is_header else "td"
             row_cells_html: List[str] = []
 
-            # Si no es una fila con rowspan consumido desde arriba, rellenar huecos si hace falta
             for cell in m_row:
                 attrs = []
                 if cell["colspan"] > 1:
@@ -334,7 +328,6 @@ class TableRecognizer:
         html_lines.append("</table>")
         html_out = "\n".join(html_lines)
 
-        # Construir GFM limpio cuando la tabla no tiene celdas combinadas
         gfm_out: Optional[str] = None
         if not has_merged and structured_rows:
             gfm_rows: List[List[str]] = []

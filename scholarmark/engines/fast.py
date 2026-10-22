@@ -233,7 +233,7 @@ class FastEngine(BaseEngine):
             caption_map, saved_vectors = self._extract_hybrid_visuals(doc, asset_dir)
 
         raw_markdown = pymupdf4llm.to_markdown(
-            str(pdf_path),
+            doc,
             write_images=self.config.extract_images,
             image_path=str(asset_dir) if (self.config.extract_images and asset_dir) else "",
             image_format=self.config.image_format,

@@ -1,18 +1,20 @@
 """
 Core ScholarExtractor pipeline implementation with pluggable engines (fast, vision, docling)
-and canonical DocumentIR serialization (Markdown + JSON).
+and canonical DocumentIR serialization (Markdown + JSON) with zero-disk in-memory manifest generation.
 """
 
+import os
 import time
+from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 from dataclasses import dataclass
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Tuple
 
 import fitz  # PyMuPDF
 
 from .config import ExtractorConfig
 from .core.figure_manager import setup_asset_folder, get_figure_count
-from .core.manifest import generate_manifest
+from .core.manifest import generate_manifest, extract_document_info_from_ir
 from .engines import get_engine
 from .rag.chunker import export_chunks_jsonl
 from .render import render_markdown, export_canonical_json
@@ -31,15 +33,26 @@ class ExtractionResult:
     vector_figures: int
     elapsed_seconds: float
     error_message: Optional[str] = None
-    engine_used: str = "fast"
+    engine_used: str = "vision"
     target_json: Optional[str] = None
     target_chunks: Optional[str] = None
+    manifest_entry: Optional[Dict[str, Any]] = None
+
+
+def _convert_single_worker(
+    pdf_path_str: str,
+    output_dir_str: str,
+    config: ExtractorConfig,
+) -> ExtractionResult:
+    """Worker de nivel superior para ProcessPoolExecutor (sin condiciones de carrera en DeltaCache)."""
+    ext = ScholarExtractor(config=config)
+    return ext.convert_file(Path(pdf_path_str), Path(output_dir_str), update_cache=False)
 
 
 class ScholarExtractor:
     """
-    Motor principal de extracción científica de alta precisión v4.0.
-    Orquesta triaje documental, motores intercambiables (fast, vision, docling),
+    Motor principal de extracción científica de alta precisión v4.1.
+    Orquesta triaje documental, motores intercambiables (vision, fast, docling),
     renderizado Markdown/HTML/KaTeX, exportación JSON canónica, chunks JSONL y manifiestos de grounding RAG.
     """
 
@@ -58,17 +71,18 @@ class ScholarExtractor:
         for p_idx in range(total_pages):
             page = doc[p_idx]
             text = page.get_text("text").strip()
-            images = page.get_images()
 
-            if len(text) < 50 and len(images) >= 1:
-                page_area = page.rect.width * page.rect.height
-                if page_area > 0:
-                    for img in images:
-                        xref = img[0]
-                        for r in page.get_image_rects(xref):
-                            if (r.width * r.height) / page_area > 0.85:
-                                scanned_pages.append(p_idx + 1)
-                                break
+            if len(text) < 50:
+                images = page.get_images()
+                if len(images) >= 1:
+                    page_area = page.rect.width * page.rect.height
+                    if page_area > 0:
+                        for img in images:
+                            xref = img[0]
+                            for r in page.get_image_rects(xref):
+                                if (r.width * r.height) / page_area > 0.85:
+                                    scanned_pages.append(p_idx + 1)
+                                    break
 
             if len(text) > 0 and (text.count("\ufffd") / len(text)) > 0.15:
                 corrupted_pages.append(p_idx + 1)
@@ -80,7 +94,12 @@ class ScholarExtractor:
             "is_predominantly_scanned": len(scanned_pages) > (total_pages * 0.5) if total_pages > 0 else False,
         }
 
-    def convert_file(self, pdf_path: Path, output_dir: Path) -> ExtractionResult:
+    def convert_file(
+        self,
+        pdf_path: Path,
+        output_dir: Path,
+        update_cache: bool = True,
+    ) -> ExtractionResult:
         """Convierte un único archivo PDF a Markdown de alta fidelidad (y opcionalmente JSON canónico y chunks JSONL)."""
         pdf_path = Path(pdf_path)
         output_dir = Path(output_dir)
@@ -99,7 +118,13 @@ class ScholarExtractor:
         engine = get_engine(self.config)
 
         try:
-            with fitz.open(str(pdf_path)) as doc:
+            ext_pdf_path = to_extended_path(pdf_path)
+            try:
+                doc_ctx = fitz.open(ext_pdf_path)
+            except Exception:
+                with open(ext_pdf_path, "rb") as bf:
+                    doc_ctx = fitz.open(stream=bf.read(), filetype="pdf")
+            with doc_ctx as doc:
                 triage_info = self.triage_document(doc) if self.config.triage_pages else {}
                 ir, stats = engine.parse(doc=doc, pdf_path=pdf_path, asset_dir=asset_dir)
 
@@ -130,14 +155,21 @@ class ScholarExtractor:
                     max_chars=self.config.chunk_max_chars,
                 )
 
+            manifest_entry = (
+                extract_document_info_from_ir(ir, target_md.name, md_final)
+                if not self.config.skip_manifest
+                else None
+            )
+
             elapsed = time.time() - start_time
             fig_count = get_figure_count(asset_dir) if asset_dir else 0
             vector_count = int(stats.get("vector_figures", 0))
             engine_used = str(stats.get("engine_used", engine.name))
 
-            cache = DeltaCache(output_dir)
-            cache.record(pdf_path, target_md, self.config, figure_count=fig_count)
-            cache.save()
+            if update_cache:
+                cache = DeltaCache(output_dir)
+                cache.record(pdf_path, target_md, self.config, figure_count=fig_count)
+                cache.save()
 
             return ExtractionResult(
                 status="success",
@@ -150,6 +182,7 @@ class ScholarExtractor:
                 engine_used=engine_used,
                 target_json=str(target_json) if target_json else None,
                 target_chunks=str(target_chunks) if target_chunks else None,
+                manifest_entry=manifest_entry,
             )
 
         except Exception as e:
@@ -178,8 +211,11 @@ class ScholarExtractor:
         output_dir.mkdir(parents=True, exist_ok=True)
 
         pdf_files = sorted([f for f in source_dir.glob("*.pdf")])
-        results: List[ExtractionResult] = []
+        total_files = len(pdf_files)
+        results_by_idx: Dict[int, ExtractionResult] = {}
         cache = DeltaCache(output_dir)
+        precomputed_manifest: Dict[str, dict] = {}
+        pending: List[Tuple[int, Path]] = []
 
         for idx, pdf in enumerate(pdf_files, 1):
             target_md = output_dir / f"{pdf.stem}.md"
@@ -196,21 +232,60 @@ class ScholarExtractor:
                     elapsed_seconds=0.0,
                     engine_used=self.config.engine,
                 )
-                results.append(res)
+                results_by_idx[idx] = res
                 if on_progress:
-                    on_progress(idx, len(pdf_files), pdf, res)
-                continue
+                    on_progress(idx, total_files, pdf, res)
+            else:
+                pending.append((idx, pdf))
 
-            res = self.convert_file(pdf, output_dir)
-            cache.record(pdf, target_md, self.config, figure_count=res.figure_count)
-            results.append(res)
-            if on_progress:
-                on_progress(idx, len(pdf_files), pdf, res)
+        effective_workers = (
+            min(4, os.cpu_count() or 1)
+            if self.config.workers == 0
+            else max(1, int(self.config.workers))
+        )
+
+        if effective_workers > 1 and len(pending) > 1:
+            max_w = min(effective_workers, len(pending))
+            with ProcessPoolExecutor(max_workers=max_w) as pool:
+                futures = [
+                    (
+                        idx,
+                        pdf,
+                        pool.submit(
+                            _convert_single_worker,
+                            str(pdf),
+                            str(output_dir),
+                            self.config,
+                        ),
+                    )
+                    for idx, pdf in pending
+                ]
+                for idx, pdf, fut in futures:
+                    target_md = output_dir / f"{pdf.stem}.md"
+                    res = fut.result()
+                    if res.status == "success":
+                        if res.manifest_entry is not None:
+                            precomputed_manifest[pdf.stem] = res.manifest_entry
+                        cache.record(pdf, target_md, self.config, figure_count=res.figure_count)
+                    results_by_idx[idx] = res
+                    if on_progress:
+                        on_progress(idx, total_files, pdf, res)
+        else:
+            for idx, pdf in pending:
+                target_md = output_dir / f"{pdf.stem}.md"
+                res = self.convert_file(pdf, output_dir, update_cache=False)
+                if res.status == "success":
+                    if res.manifest_entry is not None:
+                        precomputed_manifest[pdf.stem] = res.manifest_entry
+                    cache.record(pdf, target_md, self.config, figure_count=res.figure_count)
+                results_by_idx[idx] = res
+                if on_progress:
+                    on_progress(idx, total_files, pdf, res)
 
         cache.save()
 
         if not self.config.skip_manifest:
             manifest_path = output_dir / "scholarmark_manifest.json"
-            generate_manifest(output_dir, manifest_path)
+            generate_manifest(output_dir, manifest_path, precomputed=precomputed_manifest)
 
-        return results
+        return [results_by_idx[i] for i in range(1, total_files + 1)]

@@ -1,33 +1,68 @@
 """
-Native Vector Span Mapper for ScholarMark v3.0.
+Native Vector Span Mapper for ScholarMark v4.1.
 Intersects layout bounding boxes with native PDF text spans (rawdict/dict),
 reconstructs physical word spacing (Δx kerning), and rescues any orphan spans
 to guarantee 0.0% content hallucination and 100% native text retention.
 """
 
-from typing import List, Dict, Any
+import re
+from typing import List, Dict, Any, Optional
 import fitz
 
 from .detector import LayoutRegion
 from ..core.geometry import BoundingBox
+from ..core.page_context import PageContext
 from ..ir.document import Block
+
+_INLINE_SCRIPT_RE = re.compile(r"^[A-Za-z0-9+\-(),]+$")
+_INLINE_BASE_RE = re.compile(r"^[A-Za-zΑ-Ωα-ω][A-Za-z0-9]{0,2}$")
 
 
 def _reconstruct_line_text_with_kerning(spans: List[Dict[str, Any]]) -> str:
     """
     Une los spans de una línea reconstruyendo espacios físicos cuando la distancia
-    horizontal (Δx) entre dos spans consecutivos supera el 18% del tamaño de fuente.
+    horizontal (Δx) entre dos spans consecutivos supera el 18% del tamaño de fuente,
+    y detecta desplazamientos verticales de línea base (Δy) con reducción de cuerpo
+    tipográfico para reconstruir subíndices (_{...}) y superíndices (^{...}) inline.
     """
     if not spans:
         return ""
     parts: List[str] = []
-    prev_x1 = None
+    prev_x1: Optional[float] = None
+    base_sz: Optional[float] = None
+    base_cy: Optional[float] = None
+    base_token: str = ""
+
     for s in spans:
         txt = s.get("text", "")
         if not txt:
             continue
         bbox = s.get("bbox")
         sz = float(s.get("size", 10.0))
+        cy = ((float(bbox[1]) + float(bbox[3])) * 0.5) if bbox is not None else None
+        txt_clean = txt.strip()
+
+        if (
+            prev_x1 is not None
+            and bbox is not None
+            and base_sz is not None
+            and base_cy is not None
+            and cy is not None
+            and 1 <= len(txt_clean) <= 6
+            and _INLINE_SCRIPT_RE.fullmatch(txt_clean)
+            and _INLINE_BASE_RE.fullmatch(base_token)
+            and sz <= (base_sz * 0.82)
+            and -2.0 <= (float(bbox[0]) - prev_x1) <= (base_sz * 0.40)
+            and abs(cy - base_cy) >= (base_sz * 0.10)
+        ):
+            dy = cy - base_cy
+            if dy > 0:
+                parts.append(f"_{{{txt_clean}}}")
+            else:
+                parts.append(f"^{{{txt_clean}}}")
+            prev_x1 = float(bbox[2])
+            continue
+
         if prev_x1 is not None and bbox is not None:
             dx = float(bbox[0]) - prev_x1
             if dx > (sz * 0.18) and (not parts or not parts[-1].endswith(" ")) and not txt.startswith(" "):
@@ -35,6 +70,10 @@ def _reconstruct_line_text_with_kerning(spans: List[Dict[str, Any]]) -> str:
         parts.append(txt)
         if bbox is not None:
             prev_x1 = float(bbox[2])
+            base_sz = sz
+            base_cy = cy
+            words_in_span = txt.rstrip().split()
+            base_token = words_in_span[-1].lstrip("([") if (words_in_span and not txt.endswith(" ")) else ""
     return "".join(parts).strip()
 
 
@@ -42,16 +81,16 @@ def map_spans_to_blocks(
     page: fitz.Page,
     page_num: int,
     regions: List[LayoutRegion],
-    rescue_orphans: bool = True
+    rescue_orphans: bool = True,
+    ctx: Optional[PageContext] = None,
 ) -> List[Block]:
     """
     Puebla cada región detectada por LayoutDetector con el texto nativo exacto de la página
     y rescata cualquier línea de texto que haya quedado fuera de las cajas detectadas.
     """
-    raw_dict = page.get_text("dict")
+    raw_dict = ctx.raw_dict if ctx is not None else page.get_text("dict")
     raw_blocks = raw_dict.get("blocks", [])
 
-    # Extraer todas las líneas nativas con su bbox y texto reconstruido con kerning
     native_lines: List[Dict[str, Any]] = []
     for b in raw_blocks:
         if b.get("type") != 0:
@@ -72,8 +111,6 @@ def map_spans_to_blocks(
         bid = f"p{page_num}_{reg.kind}_{r_idx}"
 
         if reg.kind in ("figure", "table"):
-            # El contenido de tablas y figuras se procesa en sus módulos dedicados,
-            # pero marcamos sus líneas internas como consumidas para no duplicarlas como prosa huérfana
             for nl in native_lines:
                 if nl["bbox"].coverage_by(reg.bbox) >= 0.50:
                     nl["consumed"] = True
@@ -98,7 +135,6 @@ def map_spans_to_blocks(
                 nl["consumed"] = True
 
         matched_lines.sort(key=lambda item: (round(item["bbox"].y0, 1), round(item["bbox"].x0, 1)))
-        # Unir líneas manejando guiones de corte de línea (hyphenation)
         assembled_lines: List[str] = []
         for item in matched_lines:
             line_str = item["text"]
@@ -129,7 +165,6 @@ def map_spans_to_blocks(
             metadata=dict(reg.metadata),
         ))
 
-    # Rescate de spans/líneas huérfanas que no cayeron en ninguna región
     if rescue_orphans:
         orphan_lines = [nl for nl in native_lines if not nl["consumed"]]
         for o_idx, ol in enumerate(orphan_lines, 1):

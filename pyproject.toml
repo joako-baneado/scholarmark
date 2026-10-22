@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "scholarmark"
-version = "4.0.0"
-description = "High-precision scientific PDF to Markdown, Canonical JSON & RAG Chunks extractor with pluggable vision engines, 2D LaTeX math, hierarchical HTML tables, 1:N caption matching, bidirectional citations, and RAG grounding manifest."
+version = "4.1.0"
+description = "High-precision scientific PDF to Markdown, Canonical JSON & RAG Chunks extractor with single-pass PageContext, VisionEngine default, direct XREF figure dump, 2D LaTeX math, hierarchical HTML tables, 1:N caption matching, bidirectional citations, and in-memory RAG grounding manifest."
 readme = "README.md"
 authors = [
     { name = "ScholarMark Team" }

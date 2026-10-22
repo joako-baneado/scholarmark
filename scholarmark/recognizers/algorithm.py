@@ -1,5 +1,5 @@
 """
-Algorithm & Pseudocode Block Recognizer for ScholarMark v3.1.
+Algorithm & Pseudocode Block Recognizer for ScholarMark v4.1.
 Recovers hierarchical indentation, line numbering, Input/Output/Require/Ensure headers,
 and inline mathematical notation from floating algorithm environments (algorithm2e,
 algpseudocode, algorithmic) in IEEE, ACM, Springer, and arXiv papers.
@@ -7,11 +7,12 @@ algpseudocode, algorithmic) in IEEE, ACM, Springer, and arXiv papers.
 
 from dataclasses import dataclass, field
 import re
-from typing import List, Optional, Tuple, Dict, Any
+from typing import List, Optional, Tuple
 import fitz
 
 from ..core.geometry import BoundingBox
 from ..core.math_parser import clean_math_glyphs, sanitize_numeric_typography
+from ..core.page_context import PageContext
 
 
 ALGORITHM_HEADER_RE = re.compile(
@@ -68,9 +69,6 @@ def _clean_algo_code(text: str) -> str:
 class AlgorithmRecognizer:
     """
     Reconstructor híbrido de bloques de algoritmos y pseudocódigo.
-    Combina el desplazamiento horizontal físico (Δx) de los spans después del número de línea
-    con el análisis sintáctico de bloques de control (for/while/if/else/end) para preservar
-    exactamente la sangría anidada.
     """
 
     def __init__(self, indent_step_pt: float = 10.0):
@@ -86,7 +84,6 @@ class AlgorithmRecognizer:
         if ALGORITHM_HEADER_RE.match(lines[0]):
             return True
 
-        # Contar señales de pseudocódigo (Require/Ensure/Input/Output, números de línea 1:, for/while/end)
         spec_hits = sum(1 for ln in lines[:4] if _SPEC_KEYWORD_RE.match(ln))
         numbered_hits = sum(1 for ln in lines if _LINE_NUM_PREFIX_RE.match(ln))
         kw_hits = sum(
@@ -100,16 +97,19 @@ class AlgorithmRecognizer:
         self,
         page: fitz.Page,
         bbox: BoundingBox,
-        fallback_text: str = ""
+        fallback_text: str = "",
+        ctx: Optional[PageContext] = None,
     ) -> AlgorithmResult:
         """
         Extrae y estructura un bloque de algoritmo en la región dada de la página.
         """
-        clip = bbox.pad(3.0, page.rect).to_fitz_rect()
-        raw_dict = page.get_text("dict", clip=clip)
+        if ctx is not None:
+            raw_dict = ctx.clip_rawdict(bbox, pad=3.0)
+        else:
+            clip = bbox.pad(3.0, page.rect).to_fitz_rect()
+            raw_dict = page.get_text("dict", clip=clip)
 
         raw_lines: List[Tuple[float, float, Optional[str], str]] = []
-        # Cada tupla: (y0, code_x0, line_num_str, code_text)
 
         for b in raw_dict.get("blocks", []):
             if b.get("type") != 0:
@@ -124,7 +124,6 @@ class AlgorithmRecognizer:
                 first_txt = str(spans[0].get("text", "")).strip()
                 first_x0 = float(spans[0]["bbox"][0])
 
-                # Caso A: El primer span es exclusivamente el número de línea (ej. "1:", "2.")
                 if re.fullmatch(r"\[?\d{1,3}\]?[:.)]?", first_txt) and len(spans) >= 2:
                     line_num = first_txt.rstrip(":.)").strip("[]")
                     code_x0 = float(spans[1]["bbox"][0])
@@ -132,14 +131,12 @@ class AlgorithmRecognizer:
                     raw_lines.append((y0, code_x0, line_num, code_str))
                     continue
 
-                # Caso B: Toda la línea viene en uno o varios spans donde el primero empieza con "1: ..."
                 full_txt = " ".join(str(s.get("text", "")).strip() for s in spans)
                 m_num = _LINE_NUM_PREFIX_RE.match(full_txt)
                 if m_num:
                     prefix_part = full_txt[: full_txt.find(m_num.group(1))]
                     line_num = re.sub(r"[^\d]", "", prefix_part) or None
                     code_str = m_num.group(1).strip()
-                    # Estimar code_x0 a partir de espacios o posición del span
                     leading_spaces = len(m_num.group(1)) - len(m_num.group(1).lstrip(" "))
                     code_x0 = first_x0 + 14.0 + (leading_spaces * 4.0)
                     raw_lines.append((y0, code_x0, line_num, code_str))
@@ -171,14 +168,12 @@ class AlgorithmRecognizer:
             md = f"**{title}**"
             return AlgorithmResult(title=title, algorithm_id=algo_id, lines=[], formatted_markdown=md)
 
-        # Determinar el margen base x_min de las instrucciones de código (excluyendo specs si están pegadas al borde)
         code_x0_candidates = [
             x0 for (_, x0, _, c_txt) in body_tuples
             if not _SPEC_KEYWORD_RE.match(c_txt)
         ]
         base_x0 = min(code_x0_candidates) if code_x0_candidates else min(x[1] for x in body_tuples)
 
-        # Detectar si el algoritmo usa cierres explícitos (end, end for, end if, until)
         has_explicit_closures = any(
             _BLOCK_CLOSE_RE.match(_clean_algo_code(raw_c))
             for (_, _, _, raw_c) in body_tuples
@@ -205,14 +200,12 @@ class AlgorithmRecognizer:
                 ))
                 continue
 
-            # Si es una instrucción de cierre (end, end for, end if, until) o intermedia (else), reducir nivel antes
             is_close = bool(_BLOCK_CLOSE_RE.match(clean_code))
             is_mid = bool(_BLOCK_MID_RE.match(clean_code))
 
             if is_close or is_mid:
                 logical_depth = max(0, logical_depth - 1)
 
-            # Calcular nivel físico por desplazamiento horizontal Δx (paso típico 12pt = 1.2em)
             dx = max(0.0, code_x0 - base_x0)
             phys_indent = int(round(dx / max(12.0, self.indent_step_pt)))
 
@@ -230,14 +223,12 @@ class AlgorithmRecognizer:
                 raw_x0=code_x0,
             ))
 
-            # Si abre un bloque (for ... do, while ... do, if ... then) o es else, incrementar profundidad
             is_open = bool(_BLOCK_OPEN_RE.match(clean_code)) and not re.search(r"\bend\b", clean_code, re.IGNORECASE)
             if is_open or is_mid:
                 logical_depth += 1
 
-        # Renderizar a Markdown estructurado
         md_lines = [f"**{title}**", "```text"]
-        for idx, al in enumerate(structured_lines, 1):
+        for al in structured_lines:
             indent_spaces = "    " * al.indent_level
             if al.is_spec:
                 md_lines.append(f"{al.code}")

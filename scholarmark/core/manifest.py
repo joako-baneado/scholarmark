@@ -1,16 +1,18 @@
 """
-Grounding manifest generator module for ScholarMark v3.0.
+Grounding manifest generator module for ScholarMark v4.1.
 Builds a machine-readable JSON index of tables (GFM & semantic HTML), equations,
 metrics, and sections specifically tailored for RAG pipelines and LLM citation validators.
+Supports both disk-based extraction and zero-disk in-memory DocumentIR extraction.
 """
 
 import json
 import re
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Dict, Any
 import yaml
 
 from .. import __version__
+from ..ir.document import DocumentIR
 from .citations import BibliographyParser, expand_citation_markers
 
 
@@ -45,33 +47,10 @@ def _parse_html_tables(text: str, start_idx: int = 1) -> list:
     return tables
 
 
-def extract_document_info(md_path: Path) -> dict:
-    """
-    Extrae metadatos, tablas estructuradas (GFM y HTML), ecuaciones, métricas,
-    bibliografía estructurada, afirmaciones ancladas (grounded_claims) y semántica
-    de gráficos de un archivo Markdown (y su *.ir.json compañero si existe).
-    """
-    text = md_path.read_text(encoding='utf-8')
-
-    # 1. Frontmatter YAML
-    meta = {}
-    if text.startswith('---'):
-        parts = text.split('---', 2)
-        if len(parts) >= 3:
-            try:
-                meta = yaml.safe_load(parts[1]) or {}
-            except Exception:
-                pass
-
-    title = meta.get('title', md_path.stem)
-    doi = meta.get('doi', '')
-    year = meta.get('year', None)
-    engine = meta.get('engine', 'fast')
-
-    # 2. Secciones
+def _extract_tables_and_metrics_from_markdown(text: str) -> Dict[str, Any]:
+    """Extrae secciones, tablas, conteo de ecuaciones y métricas cuantitativas de una cadena Markdown."""
     sections = re.findall(r'^##\s+(.+)$', text, re.MULTILINE)
 
-    # 3. Tablas estructuradas (GFM + HTML)
     tables = []
     table_blocks = re.findall(r'(\|[^\n]+\|\n\|[\s\-:|]+\|\n(?:\|[^\n]+\|\n*)+)', text)
     for idx, tb in enumerate(table_blocks):
@@ -90,29 +69,133 @@ def extract_document_info(md_path: Path) -> dict:
     html_tables = _parse_html_tables(text, start_idx=len(tables) + 1)
     tables.extend(html_tables)
 
-    # 4. Ecuaciones
     block_eqs = len(re.findall(r'\$\$(.*?)\$\$', text, re.DOTALL))
     inline_eqs = len(re.findall(r'(?<!\$)\$([^$\n]+)\$(?!\$)', text))
-
-    # 5. Figuras enlazadas y metadatos internos de gráficos
     fig_links = re.findall(r'!\[(.*?)\]\((.*?)\)', text)
-    figures_meta = [
-        {"caption": cap, "asset": path}
-        for cap, path in fig_links
-    ]
 
-    # 6. Métricas factuales para Grounding
     percentages = sorted(set(re.findall(r'\b\d+(?:\.\d+)?\s*%', text)))[:25]
     performances = sorted(set(re.findall(
         r'\b\d+(?:\.\d+)?\s*(?:ms|s|FPS|fps|Hz|kHz|GFLOPs|MFLOPs|MB|GB|params)\b', text
     )))[:25]
 
-    # 7. Bibliografía y citas desde *.ir.json compañero o desde el propio Markdown
+    return {
+        "sections": sections,
+        "tables": tables,
+        "block_eqs": block_eqs,
+        "inline_eqs": inline_eqs,
+        "fig_links": fig_links,
+        "percentages": percentages,
+        "performances": performances,
+    }
+
+
+def extract_document_info_from_ir(ir: DocumentIR, md_filename: str, md_text: str) -> dict:
+    """
+    Construye el registro de manifiesto directamente en memoria a partir de DocumentIR y md_text,
+    evitando re-lecturas de disco y preservando metadatos enriquecidos aunque export_json=False.
+    """
+    parsed = _extract_tables_and_metrics_from_markdown(md_text)
+    meta = ir.meta or {}
+
+    stem = Path(md_filename).stem
+    title = meta.get("title") or stem
+    doi = meta.get("doi") or ""
+    year = meta.get("year", None)
+    engine = meta.get("engine") or "vision"
+
+    references_list = list(meta.get("bibliography") or [])
+    grounded_claims = list(meta.get("grounded_claims") or [])
+    algorithms_count = 0
+    chart_figures = []
+
+    for pg in ir.pages:
+        for blk in pg.blocks:
+            if blk.kind == "algorithm":
+                algorithms_count += 1
+            elif blk.kind == "figure":
+                c_sem = (blk.metadata or {}).get("chart_semantics")
+                chart_figures.append({
+                    "page": blk.page,
+                    "asset": blk.asset,
+                    "caption": blk.caption_text or "",
+                    "chart_semantics": c_sem,
+                })
+
+    figures_meta = chart_figures if chart_figures else [
+        {"caption": cap, "asset": path}
+        for cap, path in parsed["fig_links"]
+    ]
+
+    return {
+        'filename': md_filename,
+        'title': title,
+        'doi': doi,
+        'year': year,
+        'engine': engine,
+        'total_sections': len(parsed["sections"]),
+        'sections_sample': parsed["sections"][:10],
+        'tables_count': len(parsed["tables"]),
+        'tables': parsed["tables"],
+        'block_equations_count': parsed["block_eqs"],
+        'inline_equations_count': parsed["inline_eqs"],
+        'figures_count': max(len(parsed["fig_links"]), len(chart_figures)),
+        'figures': figures_meta,
+        'algorithms_count': algorithms_count,
+        'references_count': len(references_list),
+        'references': references_list,
+        'grounded_claims': grounded_claims,
+        'metrics': {
+            'percentages': parsed["percentages"],
+            'performance': parsed["performances"],
+        }
+    }
+
+
+def extract_document_info(md_path: Path) -> dict:
+    """
+    Extrae metadatos, tablas estructuradas (GFM y HTML), ecuaciones, métricas,
+    bibliografía estructurada, afirmaciones ancladas (grounded_claims) y semántica
+    de gráficos de un archivo Markdown (y su *.scholarmark.json / *.ir.json compañero si existe).
+    """
+    text = md_path.read_text(encoding='utf-8')
+
+    # 1. Frontmatter YAML
+    meta = {}
+    if text.startswith('---'):
+        parts = text.split('---', 2)
+        if len(parts) >= 3:
+            try:
+                meta = yaml.safe_load(parts[1]) or {}
+            except Exception:
+                pass
+
+    title = meta.get('title', md_path.stem)
+    doi = meta.get('doi', '')
+    year = meta.get('year', None)
+    engine = meta.get('engine', 'fast')
+
+    parsed = _extract_tables_and_metrics_from_markdown(text)
+    sections = parsed["sections"]
+    tables = parsed["tables"]
+    block_eqs = parsed["block_eqs"]
+    inline_eqs = parsed["inline_eqs"]
+    fig_links = parsed["fig_links"]
+    percentages = parsed["percentages"]
+    performances = parsed["performances"]
+
+    figures_meta = [
+        {"caption": cap, "asset": path}
+        for cap, path in fig_links
+    ]
+
+    # 7. Bibliografía y citas desde *.scholarmark.json o *.ir.json compañero, o desde el propio Markdown
     references_list = []
     grounded_claims = []
     algorithms_count = 0
 
-    ir_json_path = md_path.with_suffix(".ir.json")
+    ir_json_path = md_path.with_suffix(".scholarmark.json")
+    if not ir_json_path.exists():
+        ir_json_path = md_path.with_suffix(".ir.json")
     if ir_json_path.exists():
         try:
             ir_data = json.loads(ir_json_path.read_text(encoding='utf-8'))
@@ -148,7 +231,6 @@ def extract_document_info(md_path: Path) -> dict:
             references_list = [r.to_dict() for r in parsed_refs]
 
     if not grounded_claims:
-        # Extraer oraciones con métricas y citas directamente del Markdown
         body_text = re.split(r'^##\s+[^\n]*(?:References|Bibliography|Referencias)', text, flags=re.IGNORECASE | re.MULTILINE)[0]
         for sent in re.split(r'(?<=[.!?])\s+(?=[A-ZÁÉÍÓÚÑ0-9\[])', body_text):
             s_clean = " ".join(sent.split()).strip()
@@ -177,7 +259,7 @@ def extract_document_info(md_path: Path) -> dict:
         'tables': tables,
         'block_equations_count': block_eqs,
         'inline_equations_count': inline_eqs,
-        'figures_count': len(fig_links),
+        'figures_count': max(len(fig_links), len(figures_meta)),
         'figures': figures_meta,
         'algorithms_count': algorithms_count,
         'references_count': len(references_list),
@@ -190,8 +272,16 @@ def extract_document_info(md_path: Path) -> dict:
     }
 
 
-def generate_manifest(target_dir: Path, output_file: Optional[Path] = None) -> dict:
-    """Genera el manifiesto integral JSON para todos los documentos Markdown del directorio."""
+def generate_manifest(
+    target_dir: Path,
+    output_file: Optional[Path] = None,
+    precomputed: Optional[Dict[str, dict]] = None,
+) -> dict:
+    """
+    Genera el manifiesto integral JSON para todos los documentos Markdown del directorio.
+    Si se provee `precomputed` (diccionario stem -> manifest_entry calculado en RAM),
+    reutiliza dichas entradas directamente sin volver a leer ni parsear el disco.
+    """
     target_dir = Path(target_dir)
     if output_file is None:
         output_file = target_dir / "scholarmark_manifest.json"
@@ -208,8 +298,12 @@ def generate_manifest(target_dir: Path, output_file: Optional[Path] = None) -> d
         'documents': {}
     }
 
+    precomputed_map = precomputed or {}
     for f in md_files:
-        manifest_data['documents'][f.stem] = extract_document_info(f)
+        if f.stem in precomputed_map and precomputed_map[f.stem] is not None:
+            manifest_data['documents'][f.stem] = precomputed_map[f.stem]
+        else:
+            manifest_data['documents'][f.stem] = extract_document_info(f)
 
     with open(output_file, 'w', encoding='utf-8') as jf:
         json.dump(manifest_data, jf, indent=2, ensure_ascii=False)
