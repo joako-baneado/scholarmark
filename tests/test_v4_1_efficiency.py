@@ -358,3 +358,28 @@ def test_task4_1_multiline_aligned_equations_and_inline_scripts(tmp_path: Path):
     assert "&=" in latex_str
     assert tag == "1"
     assert conf >= 0.90
+
+
+def test_task4_2_raster_table_cleanup_and_version_bump():
+    import fitz
+    from scholarmark import __version__
+    from scholarmark.recognizers.table import TableRecognizer
+
+    assert __version__ == "4.1.0"
+
+    doc = fitz.open()
+    page = doc.new_page(width=595, height=842)
+    for r in range(3):
+        for c in range(3):
+            x0 = 80 + c * 90
+            y0 = 120 + r * 28
+            page.draw_rect(fitz.Rect(x0, y0, x0 + 55, y0 + 10), color=(0, 0, 0), fill=(0.2, 0.2, 0.2))
+
+    rec = TableRecognizer()
+    html_out, gfm_out, _ = rec.recognize_table(page, BoundingBox(70, 110, 360, 220))
+    doc.close()
+
+    assert 'data-source="raster-fallback"' in html_out
+    assert "[R1C1]" not in html_out
+    assert gfm_out is not None
+    assert "[R1C1]" not in gfm_out

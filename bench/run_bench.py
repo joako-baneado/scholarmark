@@ -1,5 +1,5 @@
 """
-Comparative Benchmark Runner for ScholarMark v3.0.
+Comparative Benchmark Runner for ScholarMark v4.1.
 Runs the synthetic Gold Suite and a real corpus sample from Referencias/Original (if available),
 generating a Markdown and JSON benchmark report.
 """
@@ -16,7 +16,17 @@ if sys.platform == "win32" and hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
 from scholarmark import __version__, ScholarExtractor, ExtractorConfig
+from scholarmark.utils.paths import to_extended_path
 from .gold_suite import run_synthetic_gold_benchmark, CaseComparison
+
+
+def _open_pdf_safe(pdf: Path) -> fitz.Document:
+    ext_p = to_extended_path(pdf)
+    try:
+        return fitz.open(ext_p)
+    except Exception:
+        with open(ext_p, "rb") as bf:
+            return fitz.open(stream=bf.read(), filetype="pdf")
 
 
 def benchmark_real_corpus_sample(corpus_dir: Path, max_papers: int = 3) -> List[Dict[str, Any]]:
@@ -44,7 +54,7 @@ def benchmark_real_corpus_sample(corpus_dir: Path, max_papers: int = 3) -> List[
             )
             extractor = ScholarExtractor(config=cfg)
             for pdf in pdfs:
-                with fitz.open(str(pdf)) as d:
+                with _open_pdf_safe(pdf) as d:
                     num_pages = max(1, len(d))
                 t0 = time.perf_counter()
                 res = extractor.convert_file(pdf, tmp_path / engine_name)
@@ -72,7 +82,7 @@ def generate_markdown_report(
     lines = [
         f"# ScholarMark v{__version__} — Quantitative Benchmark Report",
         "",
-        "## 1. Gold Suite Pathologies: `fast` (v2.1 Baseline) vs. `vision` (v3.0 Hybrid Pipeline)",
+        "## 1. Gold Suite Pathologies: `fast` (v2.1 Baseline) vs. `vision` (v4.1 Ultra-Light Pipeline)",
         "",
         "| Case ID | Audited Dimension | `fast` Score | `vision` Score | Δ Improvement | `vision` Time (ms) | Notes |",
         "| :--- | :--- | :---: | :---: | :---: | :---: | :--- |",
@@ -112,7 +122,7 @@ def generate_markdown_report(
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Run ScholarMark v3.0 Benchmark Suite")
+    parser = argparse.ArgumentParser(description="Run ScholarMark v4.1 Benchmark Suite")
     parser.add_argument("--corpus", type=str, default="../Referencias/Original", help="Path to real PDF corpus")
     parser.add_argument("--max-papers", type=int, default=3, help="Number of real PDFs to sample")
     parser.add_argument(

@@ -103,34 +103,40 @@ class TableRecognizer:
         try:
             import numpy as np
             pix = page.get_pixmap(clip=clip, dpi=150, colorspace=fitz.csGRAY, alpha=False)
-            arr = np.frombuffer(pix.samples, dtype=np.uint8).reshape(pix.height, pix.width)
-            dark = (arr < 215).astype(np.float32)
+            if pix.height >= 4 and pix.width >= 4:
+                arr = np.frombuffer(pix.samples, dtype=np.uint8).reshape(pix.height, pix.width)
+                dark = (arr < 215).astype(np.float32)
 
-            row_mask = np.mean(dark, axis=1) < 0.75
-            col_mask = np.mean(dark, axis=0) < 0.75
-            clean_dark = dark * row_mask[:, None] * col_mask[None, :]
+                row_mask = np.mean(dark, axis=1) < 0.75
+                col_mask = np.mean(dark, axis=0) < 0.75
+                clean_dark = dark * row_mask[:, None] * col_mask[None, :]
 
-            row_segments = self._detect_band_segments(np.mean(clean_dark, axis=1), threshold=0.012, min_span=4)
-            col_segments = self._detect_band_segments(np.mean(clean_dark, axis=0), threshold=0.012, min_span=6)
+                row_segments = self._detect_band_segments(np.mean(clean_dark, axis=1), threshold=0.012, min_span=4)
+                col_segments = self._detect_band_segments(np.mean(clean_dark, axis=0), threshold=0.012, min_span=6)
 
-            num_rows = max(2, min(12, len(row_segments)))
-            num_cols = max(2, min(8, len(col_segments)))
+                num_rows = max(2, min(12, len(row_segments)))
+                num_cols = max(2, min(8, len(col_segments)))
+            else:
+                num_rows, num_cols = 2, 2
         except Exception:
             num_rows, num_cols = 2, 2
 
-        html_lines = [f'<table data-source="raster-fallback" data-rows="{num_rows}" data-cols="{num_cols}">']
-        hdr_cells = "".join(f"<th>Col {c + 1}</th>" for c in range(num_cols))
+        html_lines = [
+            f'<!-- Raster table detected ({num_rows}x{num_cols}): native text spans unavailable -->',
+            f'<table data-source="raster-fallback" data-rows="{num_rows}" data-cols="{num_cols}">',
+        ]
+        hdr_cells = "".join("<th></th>" for _ in range(num_cols))
         html_lines.append(f"  <tr>{hdr_cells}</tr>")
-        for r in range(1, num_rows):
-            row_cells = "".join(f"<td>[R{r}C{c + 1}]</td>" for c in range(num_cols))
+        for _ in range(1, num_rows):
+            row_cells = "".join("<td></td>" for _ in range(num_cols))
             html_lines.append(f"  <tr>{row_cells}</tr>")
         html_lines.append("</table>")
 
-        gfm_hdr = "| " + " | ".join(f"Col {c + 1}" for c in range(num_cols)) + " |"
+        gfm_hdr = "| " + " | ".join("" for _ in range(num_cols)) + " |"
         gfm_sep = "| " + " | ".join(["---"] * num_cols) + " |"
         gfm_body = [
-            "| " + " | ".join(f"[R{r}C{c + 1}]" for c in range(num_cols)) + " |"
-            for r in range(1, num_rows)
+            "| " + " | ".join("" for _ in range(num_cols)) + " |"
+            for _ in range(1, num_rows)
         ]
         return "\n".join(html_lines), "\n".join([gfm_hdr, gfm_sep] + gfm_body), False
 

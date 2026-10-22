@@ -2,7 +2,7 @@
 ScholarMark: High-Precision Scientific Paper to Markdown Extractor & RAG Grounding Engine.
 """
 
-__version__ = "4.0.0"
+__version__ = "4.1.0"
 __author__ = "ScholarMark Contributors"
 
 from .config import ExtractorConfig
@@ -20,4 +20,3 @@ __all__ = [
     "export_chunks_jsonl",
     "__version__",
 ]
-

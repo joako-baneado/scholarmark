@@ -118,7 +118,13 @@ class ScholarExtractor:
         engine = get_engine(self.config)
 
         try:
-            with fitz.open(str(pdf_path)) as doc:
+            ext_pdf_path = to_extended_path(pdf_path)
+            try:
+                doc_ctx = fitz.open(ext_pdf_path)
+            except Exception:
+                with open(ext_pdf_path, "rb") as bf:
+                    doc_ctx = fitz.open(stream=bf.read(), filetype="pdf")
+            with doc_ctx as doc:
                 triage_info = self.triage_document(doc) if self.config.triage_pages else {}
                 ir, stats = engine.parse(doc=doc, pdf_path=pdf_path, asset_dir=asset_dir)
 
