@@ -143,7 +143,7 @@ def test_task2_1_single_pass_page_context_eliminates_redundant_calls(tmp_path: P
                 rawdict_calls.append(option)
             return orig_get_text(self_page, option, *args, **kwargs)
 
-        with patch.object(fitz.Page, "find_tables", return_value=None), patch.object(
+        with patch.object(
             fitz.Page, "get_text", autospec=True, side_effect=tracked_get_text
         ):
             ir, _ = eng.parse(d, pdf_path)
@@ -151,3 +151,45 @@ def test_task2_1_single_pass_page_context_eliminates_redundant_calls(tmp_path: P
         # PageContext.from_page executes exactly 1 "rawdict" call per page across all ScholarMark stages
         assert rawdict_calls == ["rawdict"]
         assert len(ir.pages) == 1
+
+
+def test_task2_2_lazy_find_tables_gate_and_sla(tmp_path: Path):
+    import time
+    import fitz
+    from unittest.mock import patch
+    from bench.gold_suite import _create_case3_hierarchical_table
+    from bench.metrics import teds_table_score
+
+    p3 = tmp_path / "case3_hierarchical_table.pdf"
+    vis_cfg = ExtractorConfig(engine="vision", extract_images=False, html_complex_tables=True)
+    vis_eng = VisionEngine(vis_cfg)
+
+    find_tables_calls = []
+    orig_find_tables = fitz.Page.find_tables
+
+    def tracked_find_tables(*args, **kwargs):
+        find_tables_calls.append(1)
+        return orig_find_tables(*args, **kwargs)
+
+    with _create_case3_hierarchical_table(p3) as doc:
+        with patch.object(fitz.Page, "find_tables", side_effect=tracked_find_tables):
+            t0 = time.perf_counter()
+            ir_vis, _ = vis_eng.parse(doc, p3)
+            elapsed_ms = (time.perf_counter() - t0) * 1000.0
+
+    # Lazy gate avoids calling expensive find_tables() on resolved booktabs tables
+    assert len(find_tables_calls) == 0
+    assert elapsed_ms < 150.0, f"Expected < 150 ms, got {elapsed_ms:.1f} ms"
+
+    gold_html = (
+        '<table>'
+        '<tr><th rowspan="2">Method</th><th colspan="2">Human3.6M-Protocol</th></tr>'
+        '<tr><th>MPJPE</th><th>P-MPJPE</th></tr>'
+        '<tr><td>Baseline</td><td>42.8mm</td><td>33.5mm</td></tr>'
+        '<tr><td>ScholarPose</td><td>31.4mm</td><td>24.1mm</td></tr>'
+        '</table>'
+    )
+    vis_tabs = [b.html for b in ir_vis.all_blocks_ordered() if b.kind == "table" and b.html]
+    assert len(vis_tabs) == 1
+    teds = teds_table_score(vis_tabs[0], gold_html, structure_only=False)
+    assert teds == 1.0

@@ -190,17 +190,7 @@ class LayoutDetector:
             )
             return near_fig_cap and not near_tab_cap
 
-        # 1. PyMuPDF find_tables nativo si está disponible
-        try:
-            finder = page.find_tables()
-            for tab in getattr(finder, "tables", []):
-                tb = BoundingBox(*tab.bbox)
-                if tb.area >= 1200.0 and not _is_above_figure_caption_without_table_caption(tb):
-                    table_boxes.append(tb)
-        except Exception:
-            pass
-
-        # 2. Detección de tablas abiertas (booktabs) mediante pares/tríos de líneas horizontales de igual ancho
+        # 1. Detección rápida de tablas abiertas (booktabs) mediante pares/tríos de líneas horizontales de igual ancho
         wide_rules = [r for r in rules if r.width >= 100.0]
         wide_rules.sort(key=lambda r: r.y0)
         i = 0
@@ -231,7 +221,7 @@ class LayoutDetector:
             else:
                 i += 1
 
-        # 3. Rescate guiado por table_caption cuando una tabla sin bordes está justo debajo del título 'Table X'
+        # 2. Rescate guiado por table_caption cuando una tabla sin bordes o ráster está debajo del título 'Table X'
         for tc in table_captions:
             has_near_table = any(
                 (abs(tb.y0 - tc.y1) < 45.0 or abs(tc.y0 - tb.y1) < 45.0)
@@ -260,7 +250,7 @@ class LayoutDetector:
                 if u.height >= 20.0 and u.width <= page_w and u.height <= page_h:
                     table_boxes.append(u)
             else:
-                # 4. Rescate de tablas ráster (imagen incrustada inmediatamente debajo de Table X:)
+                # Rescate de tablas ráster (imagen incrustada inmediatamente debajo de Table X:)
                 candidates = (
                     [ib for _, ib in image_boxes]
                     if image_boxes is not None
@@ -278,6 +268,30 @@ class LayoutDetector:
                         and not (ib.x1 < tc.x0 - 20.0 or ib.x0 > tc.x1 + 20.0)
                     ):
                         table_boxes.append(ib)
+
+        # 3. Lazy Gate: invocar page.find_tables() solo si quedan leyendas Table X sin resolver
+        #    o reglas anchas no cubiertas por las heurísticas rápidas
+        has_unresolved_caption = any(
+            not any(abs(tb.y0 - tc.y1) < 45.0 or abs(tc.y0 - tb.y1) < 45.0 for tb in table_boxes)
+            for tc in table_captions
+        )
+        unmatched_wide_rules = [
+            r for r in wide_rules
+            if not any(tb.pad(6.0, page.rect).intersects(r) for tb in table_boxes)
+        ]
+        if has_unresolved_caption or len(unmatched_wide_rules) >= 3:
+            try:
+                finder = page.find_tables()
+                for tab in getattr(finder, "tables", []):
+                    tb = BoundingBox(*tab.bbox)
+                    if (
+                        tb.area >= 1200.0
+                        and not _is_above_figure_caption_without_table_caption(tb)
+                        and not any(tb.iou(existing) > 0.4 for existing in table_boxes)
+                    ):
+                        table_boxes.append(tb)
+            except Exception:
+                pass
 
         return table_boxes
 
