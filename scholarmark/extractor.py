@@ -1,6 +1,6 @@
 """
 Core ScholarExtractor pipeline implementation with pluggable engines (fast, vision, docling)
-and canonical DocumentIR serialization (Markdown + JSON).
+and canonical DocumentIR serialization (Markdown + JSON) with zero-disk in-memory manifest generation.
 """
 
 import time
@@ -12,7 +12,7 @@ import fitz  # PyMuPDF
 
 from .config import ExtractorConfig
 from .core.figure_manager import setup_asset_folder, get_figure_count
-from .core.manifest import generate_manifest
+from .core.manifest import generate_manifest, extract_document_info_from_ir
 from .engines import get_engine
 from .rag.chunker import export_chunks_jsonl
 from .render import render_markdown, export_canonical_json
@@ -31,15 +31,16 @@ class ExtractionResult:
     vector_figures: int
     elapsed_seconds: float
     error_message: Optional[str] = None
-    engine_used: str = "fast"
+    engine_used: str = "vision"
     target_json: Optional[str] = None
     target_chunks: Optional[str] = None
+    manifest_entry: Optional[Dict[str, Any]] = None
 
 
 class ScholarExtractor:
     """
-    Motor principal de extracción científica de alta precisión v4.0.
-    Orquesta triaje documental, motores intercambiables (fast, vision, docling),
+    Motor principal de extracción científica de alta precisión v4.1.
+    Orquesta triaje documental, motores intercambiables (vision, fast, docling),
     renderizado Markdown/HTML/KaTeX, exportación JSON canónica, chunks JSONL y manifiestos de grounding RAG.
     """
 
@@ -58,17 +59,18 @@ class ScholarExtractor:
         for p_idx in range(total_pages):
             page = doc[p_idx]
             text = page.get_text("text").strip()
-            images = page.get_images()
 
-            if len(text) < 50 and len(images) >= 1:
-                page_area = page.rect.width * page.rect.height
-                if page_area > 0:
-                    for img in images:
-                        xref = img[0]
-                        for r in page.get_image_rects(xref):
-                            if (r.width * r.height) / page_area > 0.85:
-                                scanned_pages.append(p_idx + 1)
-                                break
+            if len(text) < 50:
+                images = page.get_images()
+                if len(images) >= 1:
+                    page_area = page.rect.width * page.rect.height
+                    if page_area > 0:
+                        for img in images:
+                            xref = img[0]
+                            for r in page.get_image_rects(xref):
+                                if (r.width * r.height) / page_area > 0.85:
+                                    scanned_pages.append(p_idx + 1)
+                                    break
 
             if len(text) > 0 and (text.count("\ufffd") / len(text)) > 0.15:
                 corrupted_pages.append(p_idx + 1)
@@ -130,6 +132,12 @@ class ScholarExtractor:
                     max_chars=self.config.chunk_max_chars,
                 )
 
+            manifest_entry = (
+                extract_document_info_from_ir(ir, target_md.name, md_final)
+                if not self.config.skip_manifest
+                else None
+            )
+
             elapsed = time.time() - start_time
             fig_count = get_figure_count(asset_dir) if asset_dir else 0
             vector_count = int(stats.get("vector_figures", 0))
@@ -150,6 +158,7 @@ class ScholarExtractor:
                 engine_used=engine_used,
                 target_json=str(target_json) if target_json else None,
                 target_chunks=str(target_chunks) if target_chunks else None,
+                manifest_entry=manifest_entry,
             )
 
         except Exception as e:
@@ -180,6 +189,7 @@ class ScholarExtractor:
         pdf_files = sorted([f for f in source_dir.glob("*.pdf")])
         results: List[ExtractionResult] = []
         cache = DeltaCache(output_dir)
+        precomputed_manifest: Dict[str, dict] = {}
 
         for idx, pdf in enumerate(pdf_files, 1):
             target_md = output_dir / f"{pdf.stem}.md"
@@ -202,6 +212,8 @@ class ScholarExtractor:
                 continue
 
             res = self.convert_file(pdf, output_dir)
+            if res.status == "success" and res.manifest_entry is not None:
+                precomputed_manifest[pdf.stem] = res.manifest_entry
             cache.record(pdf, target_md, self.config, figure_count=res.figure_count)
             results.append(res)
             if on_progress:
@@ -211,6 +223,6 @@ class ScholarExtractor:
 
         if not self.config.skip_manifest:
             manifest_path = output_dir / "scholarmark_manifest.json"
-            generate_manifest(output_dir, manifest_path)
+            generate_manifest(output_dir, manifest_path, precomputed=precomputed_manifest)
 
         return results

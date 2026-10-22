@@ -64,3 +64,45 @@ def test_task1_1_manifest_reads_scholarmark_json_suffix(tmp_path: Path):
     assert info["references_count"] == 1
     assert len(info["grounded_claims"]) == 1
     assert info["figures"][0]["chart_semantics"]["axis_labels"] == ["Latency (ms)"]
+
+
+def test_task1_2_in_memory_manifest_without_json_export(tmp_path: Path):
+    import fitz
+    from scholarmark.extractor import ScholarExtractor
+
+    src_dir = tmp_path / "src"
+    out_dir = tmp_path / "out"
+    src_dir.mkdir()
+    pdf_path = src_dir / "batch_paper.pdf"
+
+    doc = fitz.open()
+    pg = doc.new_page(width=595, height=842)
+    pg.insert_text(fitz.Point(55, 70), "1. Introduction", fontsize=12)
+    pg.insert_text(fitz.Point(55, 95), "Algorithm 1: Real-Time Pose Filter", fontsize=10.5)
+    pg.insert_text(fitz.Point(55, 110), "1: for each frame f do", fontsize=9.5)
+    pg.insert_text(fitz.Point(70, 124), "2: return pose(f)", fontsize=9.5)
+    pg.insert_text(fitz.Point(55, 138), "3: end for", fontsize=9.5)
+    pg.insert_text(fitz.Point(55, 170), "Our framework reaches 144 FPS with 97.5% accuracy [1].", fontsize=10)
+    pg.insert_text(fitz.Point(55, 210), "References", fontsize=12)
+    pg.insert_text(fitz.Point(55, 235), '[1] J. Basas, "ShadowBox Pose Tracking," IEEE CVPR, 2026.', fontsize=9.5)
+    doc.save(str(pdf_path))
+    doc.close()
+
+    # export_json=False, engine="auto" -> VisionEngine + in-memory manifest entry
+    cfg = ExtractorConfig(engine="auto", export_json=False, extract_images=False)
+    extractor = ScholarExtractor(config=cfg)
+    results = extractor.convert_batch(src_dir, out_dir)
+
+    assert len(results) == 1
+    assert results[0].status == "success"
+    assert results[0].engine_used == "vision"
+    assert not (out_dir / "batch_paper.scholarmark.json").exists()
+
+    manifest_file = out_dir / "scholarmark_manifest.json"
+    assert manifest_file.exists()
+    manifest_data = json.loads(manifest_file.read_text(encoding="utf-8"))
+    doc_entry = manifest_data["documents"]["batch_paper"]
+    assert doc_entry["engine"] == "vision"
+    assert doc_entry["algorithms_count"] == 1
+    assert doc_entry["references_count"] == 1
+    assert len(doc_entry["grounded_claims"]) >= 1
