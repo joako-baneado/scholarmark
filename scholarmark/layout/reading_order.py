@@ -1,80 +1,115 @@
 """
-Topological DAG & Recursive XY-Cut Reading Order Solver for ScholarMark v3.0.
-Resolves multi-column reading order, isolates footnotes to prevent mid-sentence
+Topological DAG & Recursive XY-Cut Reading Order Solver for ScholarMark v4.1.
+Resolves generalized N-column reading order (N ∈ {1, 2, 3}), isolates footnotes to prevent mid-sentence
 column interleaving, groups IEEE author biographies by column, and stitches
 cross-page split paragraphs around floating figures/tables.
 """
 
 import re
-from typing import List, Tuple
+from typing import List, Tuple, Dict, Optional
 
 from ..ir.document import Block, PageIR
+from ..core.geometry import BoundingBox, detect_column_zones, detect_column_gutters
 
 
 _SENTENCE_END_RE = re.compile(r'[.!?:;”"\)\]]\s*$')
 
 
-def _find_vertical_gutter(blocks: List[Block], page_width: float) -> Tuple[bool, float]:
+def _find_band_gutters(
+    band_blocks: List[Block],
+    page_width: float,
+    column_zones: Optional[List[Tuple[float, float, float, float]]] = None,
+) -> List[Tuple[float, float]]:
     """
-    Detecta si un conjunto de bloques se distribuye en dos columnas separadas por una medianera
-    cercana al centro de la página.
+    Identifica las medianeras verticales (gutters) activas para una banda horizontal de bloques.
+    Soporta 1, 2 o 3 columnas, simétricas o asimétricas.
     """
-    if len(blocks) < 2 or page_width < 420.0:
-        return False, page_width / 2.0
+    if len(band_blocks) < 2 or page_width < 350.0:
+        return []
 
+    band_y0 = min(b.bbox.y0 for b in band_blocks)
+    band_y1 = max(b.bbox.y1 for b in band_blocks)
+
+    # 1. Usar column_zones si están disponibles e intersectan verticalmente la banda
+    if column_zones:
+        active = [
+            (g0, g1) for g0, g1, zy0, zy1 in column_zones
+            if (zy0 - 15.0) <= band_y1 and (zy1 + 15.0) >= band_y0
+        ]
+        if active:
+            return sorted(active, key=lambda g: g[0])
+
+    # 2. Detección por proyección horizontal directa sobre los bloques de la banda
+    gutters = detect_column_gutters(
+        [b.bbox for b in band_blocks],
+        page_width,
+        max(30.0, band_y1 - band_y0),
+        min_gutter_width=8.0,
+    )
+    if gutters:
+        return sorted(gutters, key=lambda g: g[0])
+
+    # 3. Heurística de partición bipartita para dos columnas con márgenes asimétricos o espaciados
     mid = page_width / 2.0
-    left_blocks = [b for b in blocks if b.bbox.x1 <= (mid + 18.0)]
-    right_blocks = [b for b in blocks if b.bbox.x0 >= (mid - 18.0)]
-    crossing = [
-        b for b in blocks
-        if b.bbox.x0 < (mid - 25.0) and b.bbox.x1 > (mid + 25.0)
-    ]
+    left_cand = [b for b in band_blocks if b.bbox.x1 <= (mid + 20.0)]
+    right_cand = [b for b in band_blocks if b.bbox.x0 >= (mid - 20.0)]
+    if left_cand and right_cand and (len(left_cand) + len(right_cand) == len(band_blocks)):
+        max_left = max(b.bbox.x1 for b in left_cand)
+        min_right = min(b.bbox.x0 for b in right_cand)
+        if min_right - max_left >= 6.0:
+            return [(max_left, min_right)]
 
-    if left_blocks and right_blocks and len(crossing) == 0:
-        gutter_x = (max(b.bbox.x1 for b in left_blocks) + min(b.bbox.x0 for b in right_blocks)) * 0.5
-        return True, gutter_x
-
-    return False, mid
+    return []
 
 
-def _order_band_blocks(band_blocks: List[Block], page_width: float) -> List[Block]:
+def _order_band_blocks(
+    band_blocks: List[Block],
+    page_width: float,
+    column_zones: Optional[List[Tuple[float, float, float, float]]] = None,
+) -> List[Block]:
     """
-    Ordena un grupo de bloques situados entre dos cortes de ancho completo:
-    - Si existe medianera vertical de dos columnas, lee íntegramente la columna izquierda
-      de arriba hacia abajo y luego la columna derecha de arriba hacia abajo.
-    - En caso contrario, ordena por cota vertical y0 y desempata por x0.
+    Ordena un grupo de bloques situados entre dos cortes de sincronización (spanning blocks).
+    Para N columnas, lee íntegramente de arriba a abajo Columna 0, luego Columna 1,
+    y sucesivamente hasta Columna N-1. Si no hay columnas, ordena por y0 y desempata por x0.
     """
     if len(band_blocks) <= 1:
         return list(band_blocks)
 
-    is_two_col, gutter_x = _find_vertical_gutter(band_blocks, page_width)
-    if is_two_col:
-        left_col = [b for b in band_blocks if ((b.bbox.x0 + b.bbox.x1) * 0.5) < gutter_x]
-        right_col = [b for b in band_blocks if ((b.bbox.x0 + b.bbox.x1) * 0.5) >= gutter_x]
-        left_col.sort(key=lambda b: (round(b.bbox.y0, 1), round(b.bbox.x0, 1)))
-        right_col.sort(key=lambda b: (round(b.bbox.y0, 1), round(b.bbox.x0, 1)))
-        return left_col + right_col
+    gutters = _find_band_gutters(band_blocks, page_width, column_zones)
+    if not gutters:
+        return sorted(band_blocks, key=lambda b: (round(b.bbox.y0, 1), round(b.bbox.x0, 1)))
 
-    # Verificar si aun con algún elemento ligeramente desplazado la mayoría se divide en 2 columnas
-    mid = page_width / 2.0
-    left_narrow = [b for b in band_blocks if b.bbox.width < (page_width * 0.56) and ((b.bbox.x0 + b.bbox.x1) * 0.5) < mid]
-    right_narrow = [b for b in band_blocks if b.bbox.width < (page_width * 0.56) and ((b.bbox.x0 + b.bbox.x1) * 0.5) >= mid]
-    if left_narrow and right_narrow and (len(left_narrow) + len(right_narrow) == len(band_blocks)):
-        left_narrow.sort(key=lambda b: (round(b.bbox.y0, 1), round(b.bbox.x0, 1)))
-        right_narrow.sort(key=lambda b: (round(b.bbox.y0, 1), round(b.bbox.x0, 1)))
-        return left_narrow + right_narrow
+    split_xs = [(g0 + g1) * 0.5 for g0, g1 in gutters]
+    num_cols = len(split_xs) + 1
 
-    return sorted(band_blocks, key=lambda b: (round(b.bbox.y0, 1), round(b.bbox.x0, 1)))
+    col_groups: Dict[int, List[Block]] = {c: [] for c in range(num_cols)}
+    for b in band_blocks:
+        cx = (b.bbox.x0 + b.bbox.x1) * 0.5
+        cid = sum(1 for sx in split_xs if cx > sx)
+        cid = min(cid, num_cols - 1)
+        col_groups[cid].append(b)
+
+    ordered: List[Block] = []
+    for cid in range(num_cols):
+        blocks_in_col = col_groups[cid]
+        blocks_in_col.sort(key=lambda b: (round(b.bbox.y0, 1), round(b.bbox.x0, 1)))
+        ordered.extend(blocks_in_col)
+
+    return ordered
 
 
-def order_page_blocks(blocks: List[Block], page_width: float) -> List[Block]:
+def order_page_blocks(
+    blocks: List[Block],
+    page_width: float,
+    column_zones: Optional[List[Tuple[float, float, float, float]]] = None,
+) -> List[Block]:
     """
-    Calcula el orden de lectura topológico de una página:
+    Calcula el orden de lectura topológico DAG de una página:
     1. Filtra bloques 'abandon'.
-    2. Segrega 'footnote' al final de la página para evitar que se intercalen entre la
-       columna izquierda y la columna derecha.
-    3. Utiliza bloques de ancho completo (títulos, figuras/tablas de doble columna) como
-       barreras horizontales de sincronización, aplicando ordenamiento por columna en cada banda.
+    2. Segrega 'footnote' al final de la página para evitar que se intercalen entre columnas.
+    3. Utiliza bloques de ancho completo o elementos que cruzan medianeras (títulos, figuras/tablas
+       de doble columna) como barreras de sincronización XY-Cut, aplicando ordenamiento de N columnas
+       en cada banda intermedia.
     4. Agrupa las biografías de autores ('author_bio') por columna al cierre del cuerpo.
     """
     active = [b for b in blocks if b.kind != "abandon"]
@@ -85,27 +120,38 @@ def order_page_blocks(blocks: List[Block], page_width: float) -> List[Block]:
     bios = [b for b in active if b.kind == "author_bio"]
     body = [b for b in active if b.kind not in ("footnote", "author_bio")]
 
-    # Ordenar candidatos por y0 para detectar barreras de ancho completo (spanning blocks)
+    # Detectar column_zones si no fueron suministrados
+    if not column_zones and body:
+        page_h = max((b.bbox.y1 for b in active), default=842.0)
+        column_zones = detect_column_zones([b.bbox for b in body], page_width, page_h)
+
+    gutters_all = [(g0, g1) for g0, g1, _, _ in column_zones] if column_zones else []
+
+    # Ordenar candidatos por y0 para detectar barreras de sincronización
     body_sorted_y = sorted(body, key=lambda b: (round(b.bbox.y0, 1), round(b.bbox.x0, 1)))
-    full_width_threshold = page_width * 0.60
+    full_width_threshold = page_width * 0.58
 
     ordered_body: List[Block] = []
     current_band: List[Block] = []
 
     for b in body_sorted_y:
-        is_spanning = (b.bbox.width >= full_width_threshold) or (b.kind == "title")
+        crosses_gutter = any(
+            b.bbox.x0 < (g0 - 4.0) and b.bbox.x1 > (g1 + 4.0)
+            for g0, g1 in gutters_all
+        )
+        is_spanning = (b.bbox.width >= full_width_threshold) or (b.kind == "title") or crosses_gutter
         if is_spanning:
             if current_band:
-                ordered_body.extend(_order_band_blocks(current_band, page_width))
+                ordered_body.extend(_order_band_blocks(current_band, page_width, column_zones))
                 current_band = []
             ordered_body.append(b)
         else:
             current_band.append(b)
 
     if current_band:
-        ordered_body.extend(_order_band_blocks(current_band, page_width))
+        ordered_body.extend(_order_band_blocks(current_band, page_width, column_zones))
 
-    ordered_bios = _order_band_blocks(bios, page_width) if bios else []
+    ordered_bios = _order_band_blocks(bios, page_width, column_zones) if bios else []
     ordered_footnotes = sorted(footnotes, key=lambda b: (round(b.bbox.y0, 1), round(b.bbox.x0, 1)))
 
     return ordered_body + ordered_bios + ordered_footnotes

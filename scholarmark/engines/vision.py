@@ -243,7 +243,11 @@ class VisionEngine(BaseEngine):
                         tb.caption_id = tcap_text_to_id.get(vt.caption_text)
 
             # Etapa 5A: Orden de lectura topológico DAG dentro de la página
-            ordered_blocks = order_page_blocks(blocks, page_width=page_w)
+            ordered_blocks = order_page_blocks(
+                blocks,
+                page_width=page_w,
+                column_zones=getattr(ctx, "column_zones", []),
+            )
             pages_ir.append(PageIR(
                 page_number=page_num,
                 width=page_w,
