@@ -476,6 +476,8 @@ class LayoutDetector:
         gutters = [(g0, g1) for g0, g1, _, _ in column_zones]
         self.last_gutters = gutters
         self.last_column_zones = column_zones
+        if ctx is not None:
+            ctx.column_zones = column_zones
 
         def _line_column_id(lb: BoundingBox) -> int:
             return column_id_for_bbox(lb, column_zones)

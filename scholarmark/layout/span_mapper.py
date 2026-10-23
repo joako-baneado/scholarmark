@@ -10,7 +10,7 @@ from typing import List, Dict, Any, Optional
 import fitz
 
 from .detector import LayoutRegion
-from ..core.geometry import BoundingBox
+from ..core.geometry import BoundingBox, detect_column_zones, column_id_for_bbox
 from ..core.page_context import PageContext
 from ..ir.document import Block
 
@@ -77,6 +77,23 @@ def _reconstruct_line_text_with_kerning(spans: List[Dict[str, Any]]) -> str:
     return "".join(parts).strip()
 
 
+def _assemble_lines(matched_lines: List[Dict[str, Any]]) -> List[str]:
+    assembled_lines: List[str] = []
+    for item in matched_lines:
+        line_str = item["text"]
+        if (
+            assembled_lines
+            and assembled_lines[-1].endswith("-")
+            and len(assembled_lines[-1]) > 2
+            and line_str
+            and line_str[0].islower()
+        ):
+            assembled_lines[-1] = assembled_lines[-1][:-1] + line_str
+        else:
+            assembled_lines.append(line_str)
+    return assembled_lines
+
+
 def map_spans_to_blocks(
     page: fitz.Page,
     page_num: int,
@@ -87,6 +104,7 @@ def map_spans_to_blocks(
     """
     Puebla cada región detectada por LayoutDetector con el texto nativo exacto de la página
     y rescata cualquier línea de texto que haya quedado fuera de las cajas detectadas.
+    Aplica protección estricta de medianeras de columnas para impedir el entretejido horizontal de texto.
     """
     raw_dict = ctx.raw_dict if ctx is not None else page.get_text("dict")
     raw_blocks = raw_dict.get("blocks", [])
@@ -105,6 +123,12 @@ def map_spans_to_blocks(
                     "spans": ln.get("spans", []),
                     "consumed": False,
                 })
+
+    column_zones = getattr(ctx, "column_zones", [])
+    if not column_zones and native_lines:
+        pw = float(page.rect.width)
+        ph = float(page.rect.height)
+        column_zones = detect_column_zones([nl["bbox"] for nl in native_lines], pw, ph)
 
     blocks: List[Block] = []
     for r_idx, reg in enumerate(regions, 1):
@@ -127,27 +151,78 @@ def map_spans_to_blocks(
             continue
 
         matched_lines: List[Dict[str, Any]] = []
+        reg_col = column_id_for_bbox(reg.bbox, column_zones) if column_zones else -1
+
         for nl in native_lines:
             if nl["consumed"]:
                 continue
+            # Enforce column boundaries: if region is in a specific column,
+            # reject lines residing in a different column
+            if column_zones and reg_col != -1:
+                nl_col = column_id_for_bbox(nl["bbox"], column_zones)
+                if nl_col != -1 and nl_col != reg_col:
+                    continue
+
             if nl["bbox"].coverage_by(reg.bbox) >= 0.45 or reg.bbox.coverage_by(nl["bbox"]) >= 0.65:
                 matched_lines.append(nl)
                 nl["consumed"] = True
 
-        matched_lines.sort(key=lambda item: (round(item["bbox"].y0, 1), round(item["bbox"].x0, 1)))
-        assembled_lines: List[str] = []
-        for item in matched_lines:
-            line_str = item["text"]
-            if (
-                assembled_lines
-                and assembled_lines[-1].endswith("-")
-                and len(assembled_lines[-1]) > 2
-                and line_str
-                and line_str[0].islower()
-            ):
-                assembled_lines[-1] = assembled_lines[-1][:-1] + line_str
-            else:
-                assembled_lines.append(line_str)
+        if not matched_lines:
+            blocks.append(Block(
+                id=bid,
+                kind=reg.kind,
+                bbox=reg.bbox,
+                page=page_num,
+                text="",
+                confidence=reg.confidence,
+                source="native",
+                heading_level=reg.heading_level,
+                metadata=dict(reg.metadata),
+            ))
+            continue
+
+        # If a region captured lines from multiple distinct columns, partition them
+        # by column to prevent cross-column text interweaving
+        line_cols = [
+            column_id_for_bbox(nl["bbox"], column_zones) if column_zones else -1
+            for nl in matched_lines
+        ]
+        distinct_cols = {c for c in line_cols if c != -1}
+
+        if len(distinct_cols) > 1 and reg.kind in ("text", "list", "heading"):
+            col_groups: Dict[int, List[Dict[str, Any]]] = {}
+            for nl, cid in zip(matched_lines, line_cols):
+                col_groups.setdefault(cid, []).append(nl)
+
+            for cid in sorted(col_groups.keys()):
+                group_lines = col_groups[cid]
+                group_lines.sort(key=lambda item: (round(item["bbox"].y0, 1), round(item["bbox"].x0, 1)))
+                group_bbox = group_lines[0]["bbox"]
+                for gl in group_lines[1:]:
+                    group_bbox = group_bbox.union(gl["bbox"])
+
+                assembled = _assemble_lines(group_lines)
+                sep = "\n" if reg.kind in ("algorithm", "list") else " "
+                suffix = f"_c{cid}" if cid >= 0 else "_cspan"
+                blocks.append(Block(
+                    id=f"{bid}{suffix}",
+                    kind=reg.kind,
+                    bbox=group_bbox,
+                    page=page_num,
+                    text=sep.join(assembled).strip(),
+                    confidence=reg.confidence,
+                    source="native",
+                    heading_level=reg.heading_level,
+                    metadata=dict(reg.metadata),
+                ))
+            continue
+
+        matched_lines.sort(key=lambda item: (
+            column_id_for_bbox(item["bbox"], column_zones) if column_zones else 0,
+            round(item["bbox"].y0, 1),
+            round(item["bbox"].x0, 1),
+        ))
+        assembled_lines = _assemble_lines(matched_lines)
 
         if reg.kind in ("algorithm", "list"):
             block_text = "\n".join(assembled_lines).strip()

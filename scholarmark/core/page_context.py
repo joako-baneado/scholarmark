@@ -25,6 +25,7 @@ class PageContext:
     drawings: List[Dict[str, Any]]
     words: List[Tuple[float, float, float, float, str, int, int, int]]
     image_boxes: List[Tuple[int, BoundingBox]] = field(default_factory=list)
+    column_zones: List[Tuple[float, float, float, float]] = field(default_factory=list)
     full_text: str = ""
 
     @classmethod

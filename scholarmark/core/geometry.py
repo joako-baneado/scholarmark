@@ -253,7 +253,9 @@ def expand_figure_bbox(
             if d_rect is None:
                 continue
             if _rects_within_threshold(fig_rect, d_rect, proximity_threshold):
-                if d_rect.height <= 3.5 and d_rect.width >= (page.rect.width * 0.42):
+                is_hf_rule = (d_rect.y1 <= 85.0 or d_rect.y0 >= page.rect.height - 70.0) and d_rect.height <= 3.5 and d_rect.width >= (page.rect.width * 0.45)
+                is_fullwidth = d_rect.height <= 3.5 and d_rect.width >= (page.rect.width * 0.72)
+                if is_hf_rule or is_fullwidth:
                     continue
                 if d_rect.width < (page.rect.width * 0.95) and d_rect.height < (page.rect.height * 0.95):
                     refined_box = refined_box.union(d_rect)
@@ -393,7 +395,9 @@ def cluster_vector_drawings(
             continue
         if r.width >= page_w * 0.92 or r.height >= page_h * 0.92:
             continue
-        if r.height <= 3.5 and r.width >= page_w * 0.42:
+        is_hf_rule = (r.y1 <= 85.0 or r.y0 >= page_h - 70.0) and r.height <= 3.5 and r.width >= page_w * 0.45
+        is_fullwidth = r.height <= 3.5 and r.width >= page_w * 0.72
+        if is_hf_rule or is_fullwidth:
             continue
         if r.width < 2.0 and r.height < 2.0:
             continue
