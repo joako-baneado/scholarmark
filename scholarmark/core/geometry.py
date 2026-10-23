@@ -607,7 +607,7 @@ def detect_column_zones(
     # Sólo las líneas que tienen un "vecino" paralelo (solapamiento vertical y separación
     # horizontal) pertenecen a una zona multicolumna real; esto evita que bloques de una
     # sola columna en páginas mixtas (afiliaciones, cabeceras) tapen la medianera.
-    min_col_line_w = page_width * 0.20
+    min_col_line_w = max(50.0, page_width * 0.12)
     long_lines = [b for b in col_candidates if b.width >= min_col_line_w]
     paired: List[BoundingBox] = []
     for b in long_lines:
@@ -644,12 +644,15 @@ def detect_column_zones(
     if search_right <= search_left:
         return []
 
+    max_density = max(occ)
+    max_valley_occ = 1 if max_density >= 6 else 0
+
     valleys: List[Tuple[float, float]] = []
     in_valley = False
     v_start = search_left
 
     for x in range(search_left, search_right + 1):
-        if occ[x] == 0:
+        if occ[x] <= max_valley_occ:
             if not in_valley:
                 in_valley = True
                 v_start = x

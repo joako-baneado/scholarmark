@@ -203,7 +203,7 @@ class LayoutDetector:
             for b in raw_blocks
             if b.get("type") == 0
             for ln in b.get("lines", [])
-            if any(s.get("text", "").strip() for s in ln.get("spans", []))
+            if any(s.get("text", "").strip() or s.get("chars") for s in ln.get("spans", []))
         ]
 
         def _tabular_row_count(box: BoundingBox) -> int:
@@ -470,7 +470,7 @@ class LayoutDetector:
             for b in raw_blocks
             if b.get("type") == 0
             for ln in b.get("lines", [])
-            if any(s.get("text", "").strip() for s in ln.get("spans", []))
+            if any(s.get("text", "").strip() or s.get("chars") for s in ln.get("spans", []))
         ]
         column_zones = detect_column_zones(line_boxes_all, page_w, page_h)
         gutters = [(g0, g1) for g0, g1, _, _ in column_zones]
