@@ -20,7 +20,7 @@ CAPTION_REGEX = re.compile(
 
 # Expresión regular para tablas
 TABLE_CAPTION_REGEX = re.compile(
-    r"^(Table|TABLE|Tabla|Tabell|Tabelle)\s+([0-9]+|[A-Z]|[IVX]+)(\.[0-9]+)?(\s*[:\.\-—]|\s+)",
+    r"^(?i:Table|Tab\.?|Tabla|Tabell|Tabelle)\s+([0-9]+|[A-Z]|[IVX]+)(?:\.[0-9]+)?(?:\s*[:\.\-—–](?:\s+|$)|\s*\n\s*\S|\s+(?=(?-i:[A-ZÁÉÍÓÚÑ]))(?!(?i:provides|shows|presents|lists|summarizes|compares|illustrates|reports|demonstrates|describes|gives|contains|indicates|reveals|depicts|displays|details|outlines|highlights|is|was|are|were|has|have|can|will|and|or|muestra|presenta|describe|resume|compara|ilustra|detalla|indica|contiene|es|son)\b))",
     re.IGNORECASE
 )
 
