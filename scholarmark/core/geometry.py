@@ -253,6 +253,8 @@ def expand_figure_bbox(
             if d_rect is None:
                 continue
             if _rects_within_threshold(fig_rect, d_rect, proximity_threshold):
+                if d_rect.height <= 3.5 and d_rect.width >= (page.rect.width * 0.42):
+                    continue
                 if d_rect.width < (page.rect.width * 0.95) and d_rect.height < (page.rect.height * 0.95):
                     refined_box = refined_box.union(d_rect)
                     fig_rect = refined_box.to_fitz_rect()
@@ -390,6 +392,8 @@ def cluster_vector_drawings(
         if r is None:
             continue
         if r.width >= page_w * 0.92 or r.height >= page_h * 0.92:
+            continue
+        if r.height <= 3.5 and r.width >= page_w * 0.42:
             continue
         if r.width < 2.0 and r.height < 2.0:
             continue
@@ -562,3 +566,175 @@ def export_figure_asset(
         target_dpi=effective_dpi,
         image_format=image_format,
     )
+
+
+def detect_column_zones(
+    line_boxes: List[BoundingBox],
+    page_width: float,
+    page_height: float,
+    min_gutter_width: float = 8.0,
+) -> List[Tuple[float, float, float, float]]:
+    """
+    Detecta medianeras verticales (gutters) entre columnas proyectando las cajas
+    de líneas nativas sobre el eje X e identificando valles continuos de densidad cero.
+    Soporta maquetaciones de 1, 2 o 3 columnas (simétricas o con barra lateral asimétrica)
+    y páginas mixtas (cabecera a 1 columna + cuerpo a 2 columnas).
+
+    Retorna tuplas (x_izq, x_der, y_ini, y_fin): límites horizontales de cada medianera y
+    rango vertical de la zona multicolumna en la que es válida.
+    """
+    if page_width < 360.0 or len(line_boxes) < 4:
+        return []
+
+    col_candidates: List[BoundingBox] = []
+    for b in line_boxes:
+        if b.y1 < 44.0 or b.y0 > (page_height - 42.0):
+            continue
+        if b.width < 15.0:
+            continue
+        # Ignorar líneas de ancho completo (títulos, resúmenes o encabezados que cruzan ambas márgenes)
+        if b.width >= (page_width * 0.68) or (b.x0 < (page_width * 0.22) and b.x1 > (page_width * 0.62)):
+            continue
+        col_candidates.append(b)
+
+    if len(col_candidates) < 4:
+        return []
+
+    # Sólo las líneas que tienen un "vecino" paralelo (solapamiento vertical y separación
+    # horizontal) pertenecen a una zona multicolumna real; esto evita que bloques de una
+    # sola columna en páginas mixtas (afiliaciones, cabeceras) tapen la medianera.
+    min_col_line_w = page_width * 0.20
+    long_lines = [b for b in col_candidates if b.width >= min_col_line_w]
+    paired: List[BoundingBox] = []
+    for b in long_lines:
+        for o in long_lines:
+            if o is b:
+                continue
+            v_overlap = min(b.y1, o.y1) - max(b.y0, o.y0)
+            if v_overlap >= min(b.height, o.height) * 0.4 and (o.x0 >= b.x1 + 6.0 or o.x1 <= b.x0 - 6.0):
+                paired.append(b)
+                break
+    if len(paired) < 4:
+        return []
+    col_candidates = paired
+
+    w_int = int(page_width) + 2
+    occ = [0] * w_int
+    for b in col_candidates:
+        ix0 = max(0, min(w_int - 1, int(b.x0)))
+        ix1 = max(0, min(w_int - 1, int(b.x1)))
+        for x in range(ix0, ix1 + 1):
+            occ[x] += 1
+
+    active_xs = [x for x, count in enumerate(occ) if count > 0]
+    if not active_xs:
+        return []
+
+    x_min = active_xs[0]
+    x_max = active_xs[-1]
+    if (x_max - x_min) < 200:
+        return []
+
+    search_left = max(int(page_width * 0.16), x_min + 35)
+    search_right = min(int(page_width * 0.84), x_max - 35)
+    if search_right <= search_left:
+        return []
+
+    valleys: List[Tuple[float, float]] = []
+    in_valley = False
+    v_start = search_left
+
+    for x in range(search_left, search_right + 1):
+        if occ[x] == 0:
+            if not in_valley:
+                in_valley = True
+                v_start = x
+        else:
+            if in_valley:
+                if (x - v_start) >= min_gutter_width:
+                    valleys.append((float(v_start), float(x - 1)))
+                in_valley = False
+    if in_valley and (search_right - v_start + 1) >= min_gutter_width:
+        valleys.append((float(v_start), float(search_right)))
+
+    valid_zones: List[Tuple[float, float, float, float]] = []
+    for g0, g1 in valleys:
+        gc = (g0 + g1) * 0.5
+        left_lines = [b for b in col_candidates if b.x1 <= (gc + 4.0)]
+        right_lines = [b for b in col_candidates if b.x0 >= (gc - 4.0)]
+        if len(left_lines) < 2 or len(right_lines) < 2:
+            continue
+        # Confirmar solapamiento vertical entre ambos lados (columnas paralelas reales)
+        l_y0 = min(b.y0 for b in left_lines)
+        l_y1 = max(b.y1 for b in left_lines)
+        r_y0 = min(b.y0 for b in right_lines)
+        r_y1 = max(b.y1 for b in right_lines)
+        if min(l_y1, r_y1) - max(l_y0, r_y0) >= 12.0:
+            valid_zones.append((g0, g1, min(l_y0, r_y0), max(l_y1, r_y1)))
+
+    if len(valid_zones) > 2:
+        valid_zones.sort(key=lambda z: z[1] - z[0], reverse=True)
+        valid_zones = sorted(valid_zones[:2], key=lambda z: z[0])
+
+    return valid_zones
+
+
+def detect_column_gutters(
+    line_boxes: List[BoundingBox],
+    page_width: float,
+    page_height: float,
+    min_gutter_width: float = 8.0,
+) -> List[Tuple[float, float]]:
+    """Versión simplificada de detect_column_zones: retorna sólo (x_izq, x_der) de cada medianera."""
+    return [
+        (g0, g1)
+        for g0, g1, _, _ in detect_column_zones(line_boxes, page_width, page_height, min_gutter_width)
+    ]
+
+
+def column_id_for_bbox(
+    bbox: BoundingBox,
+    column_zones: List[Tuple[float, float, float, float]],
+    zone_pad: float = 12.0,
+) -> int:
+    """
+    Asigna una caja (línea o bloque) a su columna dentro de las zonas multicolumna detectadas.
+    Retorna -1 si la caja está fuera de toda zona multicolumna o si cruza una medianera
+    (contenido de ancho completo); en caso contrario, el índice 0..N-1 de la columna.
+    El margen zone_pad (~1 interlínea) cubre primeras/últimas líneas cortas de cada columna.
+    """
+    cy = (bbox.y0 + bbox.y1) * 0.5
+    active = [
+        (g0, g1) for g0, g1, zy0, zy1 in column_zones
+        if (zy0 - zone_pad) <= cy <= (zy1 + zone_pad)
+    ]
+    if not active:
+        return -1
+    for g0, g1 in active:
+        if bbox.x0 < (g0 - 2.0) and bbox.x1 > (g1 + 2.0):
+            return -1
+    cx = (bbox.x0 + bbox.x1) * 0.5
+    return sum(1 for g0, g1 in active if cx > (g0 + g1) * 0.5)
+
+
+def split_bbox_by_gutters(
+    bbox: BoundingBox,
+    gutters: List[Tuple[float, float]],
+) -> List[BoundingBox]:
+    """
+    Divide un BoundingBox que cruza una o más medianeras verticales en sub-cajas
+    restringidas a cada columna.
+    """
+    if not gutters:
+        return [bbox]
+
+    parts: List[BoundingBox] = []
+    cur_x0 = bbox.x0
+    for g0, g1 in sorted(gutters, key=lambda g: g[0]):
+        if cur_x0 < g0 and bbox.x1 > g1:
+            parts.append(BoundingBox(cur_x0, bbox.y0, g0, bbox.y1))
+            cur_x0 = g1
+    if cur_x0 < bbox.x1:
+        parts.append(BoundingBox(cur_x0, bbox.y0, bbox.x1, bbox.y1))
+    return parts if parts else [bbox]
+

@@ -22,6 +22,8 @@ from ..core.caption_matcher import (
 from ..core.geometry import (
     BoundingBox,
     cluster_vector_drawings,
+    column_id_for_bbox,
+    detect_column_zones,
     expand_figure_bbox,
 )
 from ..core.page_context import PageContext
@@ -31,6 +33,9 @@ from ..recognizers.algorithm import AlgorithmRecognizer, ALGORITHM_HEADER_RE
 
 _HEADING_PREFIX_RE = re.compile(
     r"^(?:[1-9]|1[0-5]|[I]{1,3}|IV|V|VI{0,3}|IX|X)(?:\.\d+)*\.?\s+[A-ZÁÉÍÓÚÑ]",
+)
+_SUBSECTION_LETTER_RE = re.compile(
+    r"^[A-Z]\.\s+[A-ZÁÉÍÓÚÑ][A-Za-zÁÉÍÓÚÑáéíóúñ0-9\s\-]{2,80}$",
 )
 _CANONICAL_SECTION_RE = re.compile(
     r"^(?:ABSTRACT|RESUMEN|INTRODUCTION|INTRODUCCIÓN|RELATED\s+WORK|BACKGROUND|"
@@ -72,6 +77,8 @@ class LayoutDetector:
         self.onnx_model_path = onnx_model_path
         self.providers, self.provider_label = resolve_ort_providers(device)
         self._session = None
+        self.last_gutters: List[Tuple[float, float]] = []
+        self.last_column_zones: List[Tuple[float, float, float, float]] = []
         if onnx_model_path and Path(onnx_model_path).exists():
             try:
                 import onnxruntime as ort
@@ -191,19 +198,67 @@ class LayoutDetector:
             return near_fig_cap and not near_tab_cap
 
         # 1. Detección rápida de tablas abiertas (booktabs) mediante pares/tríos de líneas horizontales de igual ancho
-        wide_rules = [r for r in rules if r.width >= 100.0]
+        native_line_boxes: List[BoundingBox] = [
+            BoundingBox(*[float(v) for v in ln["bbox"]])
+            for b in raw_blocks
+            if b.get("type") == 0
+            for ln in b.get("lines", [])
+            if any(s.get("text", "").strip() for s in ln.get("spans", []))
+        ]
+
+        def _tabular_row_count(box: BoundingBox) -> int:
+            """
+            Cuenta las filas visuales dentro de 'box' con >= 2 celdas horizontalmente separadas
+            (evidencia de estructura tabular). La prosa de una columna produce 0 filas multicelda.
+            """
+            inside = [lb for lb in native_line_boxes if lb.coverage_by(box) >= 0.6]
+            inside.sort(key=lambda lb: (lb.y0 + lb.y1) * 0.5)
+            rows: List[List[BoundingBox]] = []
+            for lb in inside:
+                cy = (lb.y0 + lb.y1) * 0.5
+                if rows and abs(cy - (rows[-1][0].y0 + rows[-1][0].y1) * 0.5) <= max(3.0, lb.height * 0.5):
+                    rows[-1].append(lb)
+                else:
+                    rows.append([lb])
+            multi = 0
+            for r in rows:
+                r.sort(key=lambda lb: lb.x0)
+                if any(r[k + 1].x0 - r[k].x1 >= 6.0 for k in range(len(r) - 1)):
+                    multi += 1
+            return multi
+
+        # Unir segmentos de filete colineales (muchos PDFs dibujan un filete por celda)
+        merged_rules: List[BoundingBox] = []
+        for r in sorted(rules, key=lambda rr: (round(rr.y0, 0), rr.x0)):
+            if (
+                merged_rules
+                and abs(merged_rules[-1].y0 - r.y0) <= 1.0
+                and r.x0 - merged_rules[-1].x1 <= 6.0
+            ):
+                merged_rules[-1] = merged_rules[-1].union(r)
+            else:
+                merged_rules.append(r)
+
+        wide_rules = [
+            r for r in merged_rules
+            if r.width >= 100.0 and r.y0 >= 46.0 and r.y1 <= (page_h - 46.0)
+        ]
         wide_rules.sort(key=lambda r: r.y0)
         i = 0
         while i < len(wide_rules):
             r_top = wide_rules[i]
             matched_bottom = None
+            has_mid_rule = False
             for j in range(i + 1, len(wide_rules)):
                 r_cand = wide_rules[j]
+                v_span = r_cand.y1 - r_top.y0
                 if (
                     abs(r_cand.x0 - r_top.x0) <= 25.0
                     and abs(r_cand.x1 - r_top.x1) <= 25.0
-                    and 24.0 <= (r_cand.y1 - r_top.y0) <= 520.0
+                    and 24.0 <= v_span <= 620.0
                 ):
+                    if matched_bottom is not None and (r_cand.y0 - r_top.y1) >= 8.0:
+                        has_mid_rule = True
                     matched_bottom = r_cand
             if matched_bottom is not None:
                 cand_box = BoundingBox(
@@ -212,9 +267,21 @@ class LayoutDetector:
                     x1=max(r_top.x1, matched_bottom.x1) + 4.0,
                     y1=matched_bottom.y1 + 2.0,
                 ).pad(0.0, page.rect)
+                near_tab_cap = any(
+                    abs(cand_box.y0 - tc.y1) <= 55.0 or abs(tc.y0 - cand_box.y1) <= 55.0
+                    for tc in table_captions
+                )
+                v_height = cand_box.height
+                wraps_fig_caption = any(fc.coverage_by(cand_box) > 0.5 for fc in fig_caps)
+                # Tablas altas (> 260 pt) sólo se aceptan con respaldo de leyenda 'Table X' o
+                # filete intermedio (midrule); así se evita confundir filetes de cabecera/pie
+                # de página con una tabla booktabs que engulle columnas de prosa completas.
                 if (
-                    not _is_above_figure_caption_without_table_caption(cand_box)
-                    and not any(cand_box.iou(existing) > 0.4 for existing in table_boxes)
+                    (near_tab_cap or has_mid_rule or v_height <= 260.0)
+                    and (near_tab_cap or _tabular_row_count(cand_box) >= 2)
+                    and not (wraps_fig_caption and not near_tab_cap)
+                    and not _is_above_figure_caption_without_table_caption(cand_box)
+                    and not any(cand_box.iou(existing) > 0.4 or cand_box.coverage_by(existing) > 0.75 for existing in table_boxes)
                 ):
                     table_boxes.append(cand_box)
                 i += 1
@@ -234,7 +301,12 @@ class LayoutDetector:
                 if b.get("type") != 0:
                     continue
                 bb = BoundingBox(*b["bbox"])
+                if bb.y0 > (page_h - 52.0):
+                    continue
                 if 0.0 <= (bb.y0 - tc.y1) <= 180.0 and not (bb.x1 < tc.x0 or bb.x0 > tc.x1):
+                    # No absorber bloques de ancho completo si el caption es de una sola columna
+                    if tc.width < (page_w * 0.55) and bb.width > (page_w * 0.65):
+                        continue
                     txt = "".join(
                         s.get("text", "")
                         for ln in b.get("lines", [])
@@ -286,6 +358,8 @@ class LayoutDetector:
                     tb = BoundingBox(*tab.bbox)
                     if (
                         tb.area >= 1200.0
+                        and tb.y0 >= 44.0
+                        and tb.y1 <= (page_h - 44.0)
                         and not _is_above_figure_caption_without_table_caption(tb)
                         and not any(tb.iou(existing) > 0.4 for existing in table_boxes)
                     ):
@@ -293,7 +367,54 @@ class LayoutDetector:
             except Exception:
                 pass
 
-        return table_boxes
+        # Fusionar fragmentos de una misma tabla (filetes por celda / find_tables parcial):
+        # cajas con fuerte solapamiento vertical y contiguas u solapadas horizontalmente.
+        merged_tables: List[BoundingBox] = list(table_boxes)
+        changed = True
+        while changed:
+            changed = False
+            for a_i in range(len(merged_tables)):
+                for b_i in range(a_i + 1, len(merged_tables)):
+                    ta, tb2 = merged_tables[a_i], merged_tables[b_i]
+                    v_ov = min(ta.y1, tb2.y1) - max(ta.y0, tb2.y0)
+                    h_gap = max(ta.x0, tb2.x0) - min(ta.x1, tb2.x1)
+                    if v_ov >= 0.7 * min(ta.height, tb2.height) and h_gap <= 12.0:
+                        merged_tables[a_i] = ta.union(tb2)
+                        del merged_tables[b_i]
+                        changed = True
+                        break
+                if changed:
+                    break
+
+        # Extender hacia la izquierda hasta la leyenda 'Table X' alineada cuando existan celdas
+        # cortas (columna de etiquetas) fuera de la caja detectada.
+        for t_i, tb_box in enumerate(merged_tables):
+            for tc in table_captions:
+                if 0.0 <= (tb_box.y0 - tc.y1) <= 20.0 and tc.x0 < (tb_box.x0 - 20.0):
+                    label_cells = [
+                        lb for lb in native_line_boxes
+                        if lb.x0 >= (tc.x0 - 3.0) and lb.x1 <= (tb_box.x0 + 4.0)
+                        and lb.y0 >= tb_box.y0 - 2.0 and lb.y1 <= tb_box.y1 + 2.0
+                        and lb.width < (page_w * 0.35)
+                    ]
+                    if len(label_cells) >= 2:
+                        merged_tables[t_i] = BoundingBox(
+                            min(tb_box.x0, min(lb.x0 for lb in label_cells) - 2.0),
+                            tb_box.y0, tb_box.x1, tb_box.y1,
+                        )
+        table_boxes = merged_tables
+
+        # Eliminar sub-tablas redundantes contenidas dentro de una tabla mayor
+        deduped_tables: List[BoundingBox] = []
+        for idx_t, tb in enumerate(table_boxes):
+            is_subtable = any(
+                idx_o != idx_t and tb.area < other.area and tb.coverage_by(other) >= 0.75
+                for idx_o, other in enumerate(table_boxes)
+            )
+            if not is_subtable:
+                deduped_tables.append(tb)
+
+        return deduped_tables
 
     @staticmethod
     def _is_pseudocode_continuation(text: str) -> bool:
@@ -343,29 +464,62 @@ class LayoutDetector:
         table_caption_boxes: List[BoundingBox] = []
         figure_caption_boxes: List[BoundingBox] = []
 
+        # Detección de medianeras verticales (gutters) a partir de las líneas nativas de la página
+        line_boxes_all: List[BoundingBox] = [
+            BoundingBox(*[float(v) for v in ln["bbox"]])
+            for b in raw_blocks
+            if b.get("type") == 0
+            for ln in b.get("lines", [])
+            if any(s.get("text", "").strip() for s in ln.get("spans", []))
+        ]
+        column_zones = detect_column_zones(line_boxes_all, page_w, page_h)
+        gutters = [(g0, g1) for g0, g1, _, _ in column_zones]
+        self.last_gutters = gutters
+        self.last_column_zones = column_zones
+
+        def _line_column_id(lb: BoundingBox) -> int:
+            return column_id_for_bbox(lb, column_zones)
+
+        def _split_raw_block_by_columns(b: Dict[str, Any]) -> List[List[Dict[str, Any]]]:
+            """
+            Divide un bloque crudo de PyMuPDF cuyas líneas pertenecen a columnas distintas
+            (p. ej. 'INDEX TERMS ...' de ancho completo + inicio de la columna izquierda)
+            en grupos de líneas por columna, evitando cajas envolventes que invadan otra columna.
+            """
+            lines = [ln for ln in b.get("lines", []) if ln.get("spans")]
+            if not gutters or len(lines) <= 1:
+                return [lines]
+            groups: Dict[int, List[Dict[str, Any]]] = {}
+            for ln in lines:
+                cid = _line_column_id(BoundingBox(*[float(v) for v in ln["bbox"]]))
+                groups.setdefault(cid, []).append(ln)
+            return list(groups.values())
+
         prelim_text_blocks: List[Tuple[BoundingBox, str, List[Dict[str, Any]], float]] = []
         for b in raw_blocks:
             if b.get("type") != 0:
                 continue
-            bb = BoundingBox(*[float(v) for v in b["bbox"]])
-            lines = b.get("lines", [])
-            spans = [s for ln in lines for s in ln.get("spans", [])]
-            if not spans:
-                continue
-            text = "\n".join(
-                "".join(s.get("text", "") for s in ln.get("spans", []))
-                for ln in lines
-            ).strip()
-            if not text:
-                continue
-            max_sz = max(float(s.get("size", body_size)) for s in spans)
-            prelim_text_blocks.append((bb, text, spans, max_sz))
+            for lines in _split_raw_block_by_columns(b):
+                spans = [s for ln in lines for s in ln.get("spans", [])]
+                if not spans:
+                    continue
+                text = "\n".join(
+                    "".join(s.get("text", "") for s in ln.get("spans", []))
+                    for ln in lines
+                ).strip()
+                if not text:
+                    continue
+                bb = BoundingBox(*[float(v) for v in lines[0]["bbox"]])
+                for ln in lines[1:]:
+                    bb = bb.union(BoundingBox(*[float(v) for v in ln["bbox"]]))
+                max_sz = max(float(s.get("size", body_size)) for s in spans)
+                prelim_text_blocks.append((bb, text, spans, max_sz))
 
-            clean_single = " ".join(text.split())
-            if TABLE_CAPTION_REGEX.search(clean_single):
-                table_caption_boxes.append(bb)
-            elif CAPTION_REGEX.search(clean_single):
-                figure_caption_boxes.append(bb)
+                clean_single = " ".join(text.split())
+                if TABLE_CAPTION_REGEX.search(clean_single):
+                    table_caption_boxes.append(bb)
+                elif CAPTION_REGEX.search(clean_single):
+                    figure_caption_boxes.append(bb)
 
         # Detectar bloques de Algoritmos y Pseudocódigo antes de tablas
         algorithm_boxes: List[BoundingBox] = []
@@ -566,7 +720,12 @@ class LayoutDetector:
 
             # 6. Notas al pie (footnote)
             is_near_bottom = bb.y0 > (page_h * 0.72) or (footnote_rule_y is not None and bb.y0 >= (footnote_rule_y - 4.0))
-            if is_near_bottom and (max_sz <= (body_size * 0.92) or _FOOTNOTE_START_RE.search(clean_single)):
+            looks_like_heading = (
+                len(clean_single) < 90
+                and max_sz >= (body_size * 0.98)
+                and (_HEADING_PREFIX_RE.match(clean_single) or _CANONICAL_SECTION_RE.match(clean_single))
+            )
+            if is_near_bottom and not looks_like_heading and (max_sz <= (body_size * 0.92) or _FOOTNOTE_START_RE.search(clean_single)):
                 regions.append(LayoutRegion(kind="footnote", bbox=bb, confidence=0.90))
                 continue
 
