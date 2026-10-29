@@ -241,7 +241,7 @@ class LayoutDetector:
 
         wide_rules = [
             r for r in merged_rules
-            if r.width >= 100.0 and r.y0 >= 46.0 and r.y1 <= (page_h - 46.0)
+            if r.width >= 100.0 and r.y0 >= 46.0 and r.y1 <= (page_h - 50.0)
         ]
         wide_rules.sort(key=lambda r: r.y0)
         i = 0
@@ -257,7 +257,12 @@ class LayoutDetector:
                     and abs(r_cand.x1 - r_top.x1) <= 25.0
                     and 24.0 <= v_span <= 620.0
                 ):
-                    if matched_bottom is not None and (r_cand.y0 - r_top.y1) >= 8.0:
+                    if matched_bottom is not None:
+                        # Si ya tenemos una regla inferior candidata, no saltar a través de leyendas de figura
+                        # ni sobre vacíos grandes (> 75 pt) hacia reglas lejanas
+                        crosses_fig = any(matched_bottom.y1 < fc.y0 < r_cand.y0 for fc in fig_caps)
+                        if crosses_fig or (r_cand.y0 - matched_bottom.y1) > 75.0:
+                            break
                         has_mid_rule = True
                     matched_bottom = r_cand
             if matched_bottom is not None:
