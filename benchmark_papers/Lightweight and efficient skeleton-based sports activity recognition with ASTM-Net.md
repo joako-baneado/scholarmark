@@ -7,8 +7,6 @@ source_pdf: Lightweight and efficient skeleton-based sports activity recognition
   ASTM-Net.pdf
 ---
 
-![Figure p.1](assets/PLOS_ONE_ASTM_Net_Sports/fig_p1_1.png)
-
 # RESEARCH ARTICLE Lightweight and efficient skeleton-based sports activity recognition with ASTM-Net
 
 2*, Ying Jia^{3}, Ning Zhang3, GuoJin Zhao4, XiuPing Wang4, Bin Wu^{1}, Mei Xue Chunlei Zhang4
@@ -95,33 +93,16 @@ RNNs are adept at extracting long-term sequential information, making them suita
 
 **Table 1.  Summary of the advantages and disadvantages of representative methods.**
 
-<table>
-  <tr><th colspan="3">Table 1. Summary of the advantages and disadvantages of representative methods.</th></tr>
-  <tr><td>Methods</td><td>Representative Works</td><td>Advantages</td><td>Disadvantages</td></tr>
-  <tr><td colspan="2">ConvNet-based Li et al. [15], Xie et al.</td><td>Efficient modeling of local node relationships</td><td>Forcefully mapping non-Euclidean skeleton data into</td></tr>
-  <tr><td>[16]</td><td>using established convolutional structures.</td><td>images loses global node relations; limited receptive field.</td></tr>
-  <tr><td>RNN-based</td><td>Kaseris et al. [17], Feng</td><td>Good at capturing long-term dependencies,</td><td>Weak spatial modeling capability, unable to effectively</td></tr>
-  <tr><td>et al. [18]</td><td>suitable for continuous action modeling.</td><td>express complex topological relationships between</td></tr>
-  <tr><td>nodes.</td></tr>
-  <tr><td>Spectral</td><td>ST-GCNN [19], Che­</td><td colspan="2">Theoretically rigorous, global feature aggregation Relies on fixed graph Laplacian matrix, unable to model</td></tr>
-  <tr><td>GCNNs</td><td>byNet [20]</td><td>through graph Fourier transform.</td><td>dynamically; high computational complexity.</td></tr>
-  <tr><td colspan="2">Spatial GCNNs DCNN [21], GAT [22]</td><td>Direct aggregation of spatial neighbor features,</td><td>Manually defined neighbor rules may ignore long-­</td></tr>
-  <tr><td colspan="2">supports dynamic graph structures, computation­ distance node dependencies (e.g., hand collaboration</td></tr>
-  <tr><td>ally efficient.</td><td>actions).</td></tr>
-  <tr><td>Dynamic</td><td>DGCN-MPA [23],</td><td>Dynamically adjusts node relationships, adapts</td><td>Dynamic graph generation module increases the number</td></tr>
-  <tr><td>Graph</td><td>HAM-HGNet [24]</td><td>to changes in actions (e.g., differences in move­</td><td>of parameters, prone to overfitting small datasets.</td></tr>
-  <tr><td>ment speed).</td></tr>
-  <tr><td>Attention-­</td><td>CBAM-STGCN [25],</td><td>Enhances the representation of key nodes/</td><td>Attention computation introduces additional overhead.</td></tr>
-  <tr><td>enhanced</td><td>KDS-GCN [26]</td><td>channels through attention mechanisms (e.g.,</td></tr>
-  <tr><td>importance of hand nodes in ‘throwing’).</td></tr>
-  <tr><td>Hybrid</td><td>Wu et al. [27], Mansouri</td><td>Combines CNN (temporal) and GCN (spatial) to</td><td>Dual-branch design leads to parameter redundancy,</td></tr>
-  <tr><td>Architectures</td><td>et al. [28]</td><td>improve multimodal feature representation.</td><td>difficult to deploy on edge devices.</td></tr>
-  <tr><td>Transformer-­</td><td>SkateFormer [29],</td><td colspan="2">Self-attention mechanism captures global spatio­ High computational complexity, large memory consump­</td></tr>
-  <tr><td>based</td><td>HCTransformer [30]</td><td>temporal dependencies, overcoming the locality</td><td>tion for long sequences.</td></tr>
-  <tr><td>limitation of graph convolution.</td></tr>
-  <tr><td colspan="3">https://doi.org/10.1371/journal.pone.0324605.t001</td></tr>
-  <tr><td>|</td></tr>
-</table>
+| Methods | Representative Works | Advantages | Disadvantages |
+| --- | --- | --- | --- |
+| ConvNet-based | Li et al. [15], Xie et al. [16] | Efficient modeling of local node relationships using established convolutional structures. | Forcefully mapping non-Euclidean skeleton data into images loses global node relations; limited receptive field. |
+| RNN-based | Kaseris et al. [17], Feng et al. [18] | Good at capturing long-term dependencies, suitable for continuous action modeling. | Weak spatial modeling capability, unable to effectively express complex topological relationships between nodes. |
+| Spectral GCNNs | ST-GCNN [19], ChebyNet [20] | Theoretically rigorous, global feature aggregation through graph Fourier transform. | Relies on fixed graph Laplacian matrix, unable to model dynamically; high computational complexity. |
+| Spatial GCNNs | DCNN [21], GAT [22] | Direct aggregation of spatial neighbor features, supports dynamic graph structures, computationally efficient. | Manually defined neighbor rules may ignore long-distance node dependencies (e.g., hand collaboration actions). |
+| Dynamic Graph | DGCN-MPA [23], HAM-HGNet [24] | Dynamically adjusts node relationships, adapts to changes in actions (e.g., differences in movement speed). | Dynamic graph generation module increases the number of parameters, prone to overfitting small datasets. |
+| Attention-enhanced | CBAM-STGCN [25], KDS-GCN [26] | Enhances the representation of key nodes/ channels through attention mechanisms (e.g., importance of hand nodes in ‘throwing’). | Attention computation introduces additional overhead. |
+| Hybrid Architectures | Wu et al. [27], Mansouri et al. [28] | Combines CNN (temporal) and GCN (spatial) to improve multimodal feature representation. | Dual-branch design leads to parameter redundancy, difficult to deploy on edge devices. |
+| Transformer-based | SkateFormer [29], HCTransformer [30] | Self-attention mechanism captures global spatiotemporal dependencies, overcoming the locality limitation of graph convolution. | High computational complexity, large memory consumption for long sequences. |
 
 PLOS One | https://doi.org/10.1371/journal.pone.0324605  July 8, 2025 4 / 30 five parts and arranged the node coordinates into long vectors for input into Long Short-Term Memory (LSTM) networks for activity recognition. Recognizing that some activities only involve a few nodes, Feng et al. [18] proposed an end-to-end spatiotemporal attention network using RNNs, focusing on critical frames and key nodes. However, the spatial modeling limitations of RNNs generally prevent these methods from achieving competitive results [34].
 
@@ -140,8 +121,6 @@ $$
 where ˜A = A + I_{N} is the adjacency matrix with self-loops, I_{N} is the identity matrix, ˜D is the degree matrix, W^{(l)} denotes the trainable weight matrix for layer l, \sigma(.) is the nonlinear activation function, and H^{(}^{l}^{)} represents features at layer l with input H = X.
 
 b.  Spatial-based GCNNs.  Spatial-based GCNNs eliminate affinity on graph spectral theory, instead aggregating information from neighboring nodes to update central nodes from a spatial perspective [22,37]. These methods avoid Laplacian matrix constraints, enabling applications to directed graphs. Spatial-based GCNNs, akin to extended ConvNets, perform weighted summation of node information to achieve convolution [38]. Steps include propagating node features to neighbors, aggregating neighborhood features, and applying linear and nonlinear transformations to enhance model expressiveness. Examples include Diffusion Convolutional Neural Networks (DCNN) [26], Graph Sample and Aggregate (GraphSAGE) [39], and Graph Attention Networks (GAT) [40]. DCNN controls information flow via transition probabilities, GraphSAGE uses random sampling to aggregate features, and GAT employs attention coefficients to update node features, offering diverse methods for graph topology convolution. Recent advancements focus on enhancing spatial modeling through dynamic graph topologies and attention mechanisms, as follows:
-
-![Fig 1.  The system of spectral-based GCNNs.](assets/PLOS_ONE_ASTM_Net_Sports/fig_p5_1.png)
 
 *Fig 1.  The system of spectral-based GCNNs.*
 
@@ -229,13 +208,9 @@ where P  \in  R^{C}in/r∗T∗N represents the semantic features obtained from t
 
 Based on the semantic features P, activity features M  \in  R^{C}in/r∗T∗N are further extracted through the extraction function E(.). As shown in the Fig 2, the activity information is obtained by calculating the difference between adjacent frames of the semantic features, and all frame-level activity information is concatenated along the temporal dimension to form M. The process is defined as:
 
-![Fig 2.  Overall framework of the proposed ASGM. The module extracts semantic features of activity information, dynamically infers an activity-­ related adjacency graph (3A-Graph), and then applies spatial graph convolutions using the optimized adjacency graph to model activity-specific spatial relationships.](assets/PLOS_ONE_ASTM_Net_Sports/fig_p8_1.png)
-
 *Fig 2.  Overall framework of the proposed ASGM. The module extracts semantic features of activity information, dynamically infers an activity-­ related adjacency graph (3A-Graph), and then applies spatial graph convolutions using the optimized adjacency graph to model activity-specific spatial relationships.*
 
 PLOS One | https://doi.org/10.1371/journal.pone.0324605  July 8, 2025 8 / 30 https://doi.org/10.1371/journal.pone.0324605.g003
-
-![Fig 3.  Detailed structure of the activity information extraction block within ASGM. This block generates semantic representations by computing temporal differences between adjacent frames of transformed features, capturing meaningful motion patterns crucial for subsequent dynamic graph inference.](assets/PLOS_ONE_ASTM_Net_Sports/fig_p9_1.png)
 
 *Fig 3.  Detailed structure of the activity information extraction block within ASGM. This block generates semantic representations by computing temporal differences between adjacent frames of transformed features, capturing meaningful motion patterns crucial for subsequent dynamic graph inference.*
 
@@ -258,8 +233,6 @@ $$
 $$
 ϕ ( M_{i} ) = W_{3} M_{i} , i = 1 , 2 , ... , s \tag{7}
 $$
-
-![Fig 4.  Detailed structure of the graph optimization block within ASGM. This block dynamically constructs the 3A-Graph by integrating three com­ ponents: a manually initialized adjacency graph based on physical node connections (A), a trainable graph optimized during network training (B), and a dynamically inferred activity-related graph (C), effectively modeling temporal variations in node affinities.](assets/PLOS_ONE_ASTM_Net_Sports/fig_p10_1.png)
 
 *Fig 4.  Detailed structure of the graph optimization block within ASGM. This block dynamically constructs the 3A-Graph by integrating three com­ ponents: a manually initialized adjacency graph based on physical node connections (A), a trainable graph optimized during network training (B), and a dynamically inferred activity-related graph (C), effectively modeling temporal variations in node affinities.*
 
@@ -333,17 +306,11 @@ D.  Motivation for hybrid integration of ASGM and TMGM
 
 The integration of ASGM with TMGM is driven by two fundamental challenges in skeleton-based activity recognition: (1) the need to jointly model dynamically evolving spatial node relationships and multi-scale temporal dependencies, and (2) the requirement to achieve this synergy without incurring prohibitive computational costs. Traditional approaches that process spatial and temporal features through isolated modules [11–14] create artificial boundaries between these dimensions, failing
 
-![Fig 5.  Architecture of the proposed ASTM-Net. It comprises twelve stacked SpatioTemporal Graph Convolutional Blocks (STGCBs), followed by a Global Average Pooling (GAP) layer and a fully-connected layer with softmax activation for final activity classification.](assets/PLOS_ONE_ASTM_Net_Sports/fig_p13_1.png)
-
 *Fig 5.  Architecture of the proposed ASTM-Net. It comprises twelve stacked SpatioTemporal Graph Convolutional Blocks (STGCBs), followed by a Global Average Pooling (GAP) layer and a fully-connected layer with softmax activation for final activity classification.*
 
 PLOS One | https://doi.org/10.1371/journal.pone.0324605  July 8, 2025 13 / 30 https://doi.org/10.1371/journal.pone.0324605.g006
 
-![Fig 6.  Internal structure of the STGCB used in ASTM-Net. Each STGCB integrates ASGM for dynamic spatial feature extraction and a TMGM for capturing multi-scale temporal features, coupled with residual connections to enhance learning stability.](assets/PLOS_ONE_ASTM_Net_Sports/fig_p14_1.png)
-
 *Fig 6.  Internal structure of the STGCB used in ASTM-Net. Each STGCB integrates ASGM for dynamic spatial feature extraction and a TMGM for capturing multi-scale temporal features, coupled with residual connections to enhance learning stability.*
-
-![Fig 7.  Detailed structure of the TMGM. It employs multiple parallel branches with different dilation rates (dilated convolutions) and pooling operations to capture temporal information at varying scales, improving the model’s capability to represent diverse temporal dynamics within human activities.](assets/PLOS_ONE_ASTM_Net_Sports/fig_p14_2.png)
 
 *Fig 7.  Detailed structure of the TMGM. It employs multiple parallel branches with different dilation rates (dilated convolutions) and pooling operations to capture temporal information at varying scales, improving the model’s capability to represent diverse temporal dynamics within human activities.*
 
@@ -472,18 +439,25 @@ From Table 3: 1)  Accuracy vs. Parameters.  ASTM-Net achieves 0.31% higher a
   <tr><td>MST-GCNN-ALLs [56]</td><td>91.46</td><td>12.00</td><td>42.52</td><td>2,980</td><td>28.5</td></tr>
   <tr><td>DualHead-Net-ALLs [51]</td><td>91.97</td><td>12.00</td><td>N/A</td><td>3,120</td><td>32.1</td></tr>
   <tr><td>ASTM-Net-ALLs</td><td>92.28</td><td>5.77</td><td>21.39</td><td>890</td><td>18.7</td></tr>
-  <tr><td colspan="2">https://doi.org/10.1371/journal.pone.0324605.t003</td></tr>
-  <tr><td colspan="7">ASTM-Net improves accuracy by 1.59% while using only 73.4% more parameters, validating the cost-effectiveness of its</td></tr>
-  <tr><td>multi-branch design.</td></tr>
-  <tr><td colspan="7">2) Computational efficiency. ASTM-Net reduces FLOPs by 49.7% compared to MST-GCNN-ALLs while achieving</td></tr>
-  <tr><td colspan="7">0.82% higher accuracy. Despite lacking FLOPs data for DualHead-Net, ASTM-Net’s 53.6% shorter training time highlights</td></tr>
-  <tr><td colspan="2">its optimization advantages.</td></tr>
-  <tr><td colspan="7">3) Memory footprint. ASTM-Net consumes 71.5% less memory than MST-GCNN-ALLs, enabled by the lightweight</td></tr>
-  <tr><td colspan="7">TMGM module and shared 3A-Graphs. Even against Shift-GCNN-ALLs, ASTM-Net reduces memory usage by 28.8%,</td></tr>
-  <tr><td colspan="2">critical for large-batch training.</td></tr>
-  <tr><td colspan="5">Hence, ASTM-Net strikes an optimal balance between accuracy and computational cost.</td></tr>
-  <tr><td>|</td></tr>
 </table>
+
+<table>
+  <tr><th>Shift-GCNN-ALLs [50]</th><th>90.69</th><th>3.33</th><th>10.10</th><th>1,250</th><th>14.2</th></tr>
+  <tr><td>MST-GCNN-ALLs [56]</td><td>91.46</td><td>12.00</td><td>42.52</td><td>2,980</td><td>28.5</td></tr>
+  <tr><td>DualHead-Net-ALLs [51]</td><td>91.97</td><td>12.00</td><td>N/A</td><td>3,120</td><td>32.1</td></tr>
+  <tr><td>ASTM-Net-ALLs</td><td>92.28</td><td>5.77</td><td>21.39</td><td>890</td><td>18.7</td></tr>
+  <tr><td colspan="2">https://doi.org/10.1371/journal.pone.0324605.t003</td></tr>
+  <tr><td colspan="6">ASTM-Net improves accuracy by 1.59% while using only 73.4% more parameters, validating the cost-effectiveness of its</td></tr>
+  <tr><td>multi-branch design.</td></tr>
+  <tr><td colspan="6">2) Computational efficiency. ASTM-Net reduces FLOPs by 49.7% compared to MST-GCNN-ALLs while achieving</td></tr>
+  <tr><td colspan="6">0.82% higher accuracy. Despite lacking FLOPs data for DualHead-Net, ASTM-Net’s 53.6% shorter training time highlights</td></tr>
+  <tr><td>its optimization advantages.</td></tr>
+  <tr><td colspan="6">3) Memory footprint. ASTM-Net consumes 71.5% less memory than MST-GCNN-ALLs, enabled by the lightweight</td></tr>
+  <tr><td colspan="6">TMGM module and shared 3A-Graphs. Even against Shift-GCNN-ALLs, ASTM-Net reduces memory usage by 28.8%,</td></tr>
+  <tr><td colspan="2">critical for large-batch training.</td></tr>
+</table>
+
+## Hence, ASTM-Net strikes an optimal balance between accuracy and computational cost.
 
 PLOS One | https://doi.org/10.1371/journal.pone.0324605  July 8, 2025 18 / 30
 
@@ -518,8 +492,6 @@ c.  Hyper-parameter ablation.  This section evaluates the performance of AST
   <tr><td>Without A</td><td>Without C</td></tr>
   <tr><td>#Params/M↓</td><td>1.44</td><td>1.38</td><td>1.18</td><td>1.44</td></tr>
   <tr><td>X-Sub↑</td><td>89.65%</td><td>88.76%</td><td>89.44%</td><td>89.87%</td></tr>
-  <tr><td colspan="2">https://doi.org/10.1371/journal.pone.0324605.t005</td></tr>
-  <tr><td>|</td></tr>
 </table>
 
 **Table 6.  Hyper-parameter ablation results.**
@@ -557,16 +529,13 @@ As can be seen from Table 8, ASTM-Net reduces parameters by 53.8% compared to hy
 
 **Table 7.  Depth ablation results.**
 
-<table>
-  <tr><th>Table 7. Depth ablation results.</th></tr>
-  <tr><td>Model Variant</td><td>#STGCBs</td><td>X-Sub↑</td><td>#Params/M↓</td><td>#FLOPs/G↓</td><td>RTX 4070 Ti FPS↑</td></tr>
-  <tr><td>ASTM-Net-4s</td><td>4</td><td>89.12</td><td>2.15</td><td>8.42</td><td>120</td></tr>
-  <tr><td>ASTM-Net-8s</td><td>8</td><td>91.45</td><td>3.88</td><td>15.27</td><td>85</td></tr>
-  <tr><td>ASTM-Net-12s (Proposed)</td><td>12</td><td>92.28</td><td>5.77</td><td>21.39</td><td>45</td></tr>
-  <tr><td>ASTM-Net-16s</td><td>16</td><td>91.87</td><td>7.64</td><td>28.53</td><td>32</td></tr>
-  <tr><td colspan="2">https://doi.org/10.1371/journal.pone.0324605.t007</td></tr>
-  <tr><td>|</td></tr>
-</table>
+| Table 7. Depth ablation results. |  |  |  |  |  |
+| --- | --- | --- | --- | --- | --- |
+| Model Variant | #STGCBs | X-Sub↑ | #Params/M↓ | #FLOPs/G↓ | RTX 4070 Ti FPS↑ |
+| ASTM-Net-4s | 4 | 89.12 | 2.15 | 8.42 | 120 |
+| ASTM-Net-8s | 8 | 91.45 | 3.88 | 15.27 | 85 |
+| ASTM-Net-12s (Proposed) | 12 | 92.28 | 5.77 | 21.39 | 45 |
+| ASTM-Net-16s | 16 | 91.87 | 7.64 | 28.53 | 32 |
 
 **Table 8.  A Comprehensive Comparison Of Astm-Net With Sota Methods.**
 
@@ -581,6 +550,11 @@ As can be seen from Table 8, ASTM-Net reduces parameters by 53.8% compared to hy
   <tr><td>CBAM-STGCN [25]</td><td>4.50</td><td>22.30</td><td>90.78</td><td>0.008</td></tr>
   <tr><td>Wu et al. [27]</td><td>12.50</td><td>65.00</td><td>88.25</td><td>&lt; 0.001</td></tr>
   <tr><td>SkateFormer [29]</td><td>9.10</td><td>52.70</td><td>91.05</td><td>0.021</td></tr>
+  <tr><td>ASTM-Net-ALLs</td><td>5.77</td><td>21.39</td><td>92.28</td><td>–</td></tr>
+</table>
+
+<table>
+  <tr><th>SkateFormer [29]</th><th>9.10</th><th>52.70</th><th>91.05</th><th>0.021</th></tr>
   <tr><td>ASTM-Net-ALLs</td><td>5.77</td><td>21.39</td><td>92.28</td><td>–</td></tr>
   <tr><td colspan="2">https://doi.org/10.1371/journal.pone.0324605.t008</td></tr>
   <tr><td colspan="5">significantly fewer operations than self-attention-based SkateFormer. Against lightweight knowledge-driven models (e.g.,</td></tr>
@@ -609,20 +583,11 @@ As can be seen from Table 8, ASTM-Net reduces parameters by 53.8% compared to hy
   <tr><td colspan="5">branches in TMGM (dilation = 1, 3) focus on local details and long-range dependencies, respectively. When nodes are</td></tr>
   <tr><td colspan="5">missing in a single frame, the high-dilation branch leverages cross-frame information to fill the gaps (e.g., inferring hand</td></tr>
   <tr><td colspan="2">Table 9. Representative T-Test Results.</td></tr>
-  <tr><td>Compared Method</td><td colspan="2">Mean Accuracy Difference (%)↑</td><td>95% Confidence Interval</td><td>p-value↓</td></tr>
+  <tr><td>Compared Method</td><td>Mean Accuracy Difference (%)↑</td><td>95% Confidence Interval</td><td>p-value↓</td></tr>
   <tr><td>ASTM-Net vs. Liu et al. [45]</td><td>+0.82</td><td>[0.35, 1.29]</td><td>0.012</td></tr>
   <tr><td>ASTM-Net vs. SkateFormer [30]</td><td>+1.23</td><td>[0.61, 1.85]</td><td>0.021</td></tr>
   <tr><td>ASTM-Net vs. KDS-GCN [26]</td><td>+1.94</td><td>[1.12, 2.76]</td><td>0.003</td></tr>
 </table>
-
-| Table 9. Representative T-Test Results. |  |  |  |
-| --- | --- | --- | --- |
-| Compared Method | Mean Accuracy Difference (%)↑ | 95% Confidence Interval | p-value↓ |
-| ASTM-Net vs. Liu et al. [45] | +0.82 | [0.35, 1.29] | 0.012 |
-| ASTM-Net vs. SkateFormer [30] | +1.23 | [0.61, 1.85] | 0.021 |
-| ASTM-Net vs. KDS-GCN [26] | +1.94 | [1.12, 2.76] | 0.003 |
-| https://doi.org/10.1371/journal.pone.0324605.t009 |  |  |  |
-| | |  |  |  |
 
 PLOS One | https://doi.org/10.1371/journal.pone.0324605  July 8, 2025 21 / 30 positions from preceding 5 frames). The pooling branch in TMGM suppresses noisy nodes by selecting salient features via max-pooling, while the standalone 1  \times  1 convolutional branch preserves raw features to avoid over-reliance on cor­ rupted data.
 
@@ -662,8 +627,26 @@ To validate ASTM-Net’s robustness in real-world environments, we conduct exten
 | Wu et al. [27] | 88.25 | 79.12 | 73.54 | 83.67 |
 | SkateFormer [28] | 91.05 | 84.56 | 79.88 | 87.30 |
 | ASTM-Net-ALLs | 92.28 | 86.94 | 82.17 | 89.05 |
-| https://doi.org/10.1371/journal.pone.0324605.t010 |  |  |  |  |
-| | |  |  |  |  |
+
+NI↑
+
+75.84
+
+86.12
+
+84.20
+
+85.41
+
+86.95
+
+87.32
+
+83.67
+
+87.30
+
+### 89.05 https://doi.org/10.1371/journal.pone.0324605.t011
 
 **Table 11.  Generalization Test Results.**
 
@@ -676,35 +659,27 @@ To validate ASTM-Net’s robustness in real-world environments, we conduct exten
   <tr><td>Wu et al. [27]</td><td>76.55</td><td>79.01</td><td>77.33</td></tr>
   <tr><td>SkateFormer [29]</td><td>77.12</td><td>79.85</td><td>78.20</td></tr>
   <tr><td>ASTM-Net-ALLs</td><td>79.34</td><td>82.17</td><td>80.45</td></tr>
-  <tr><td colspan="2">https://doi.org/10.1371/journal.pone.0324605.t011</td></tr>
-  <tr><td colspan="4">As shown, ASTM-Net achieves 79.34% on CS and 82.17% on CV1, surpassing Wu et al. [27] by 2.79% and 3.16%,</td></tr>
-  <tr><td colspan="4">respectively. This validates its ability to handle occlusions (e.g., hands behind objects) and viewpoint shifts through</td></tr>
-  <tr><td colspan="4">dynamic 3A-Graphs. In CV2, ASTM-Net attains 80.45%, outperforming SkateFormer [29] by 2.25%, demonstrating robust­</td></tr>
-  <tr><td colspan="4">ness to mixed-view training and front-view testing. However, we found some failure cases, e.g., activities like “handing</td></tr>
-  <tr><td colspan="4">objects” achieve only 71.3% accuracy due to limited inter-person relationship modeling. sequential occlusion of critical</td></tr>
-  <tr><td colspan="4">joints (e.g., hip nodes) in long-duration activities (“clean dishes”) leads to ~8% accuracy drop. This is also our future direc­</td></tr>
-  <tr><td>tion of improvement.</td></tr>
-  <tr><td>H. Visualizations</td></tr>
-  <tr><td colspan="4">Taking the activity “jumping” as an example, Fig 8 illustrates the skeletal adjacency graph matrices without the optimi­</td></tr>
-  <tr><td colspan="4">zation of the activity-related graph Ck, represented by the sum of the initialized matrix Ak and the trainable matrix Bk for the</td></tr>
-  <tr><td colspan="4">three spatial subsets (k = 1,2,3). Figs 8a-8c visualize A1 + B1, A2 + B2, and A3 + B3, respectively. In the visualization, darker</td></tr>
-  <tr><td colspan="4">color blocks indicate stronger node affinities, while lighter colors represent weaker relationships.</td></tr>
-  <tr><td>The results show that:</td></tr>
-  <tr><td colspan="4">1) In the first spatial subset, the learned adjacency graph focuses more on self-connections (indicated by the concentra­</td></tr>
-  <tr><td colspan="4">tion of dark blocks along the diagonal). In the second and third spatial subsets, the topology focuses on the affinities</td></tr>
-  <tr><td>between different nodes.</td></tr>
-  <tr><td colspan="3">2) The learned adjacency graph can capture non-physical node affinities.</td></tr>
-  <tr><td colspan="4">3) The adjacency graphs differ across the three spatial subsets, providing rich features for spatial graph convolution.</td></tr>
-  <tr><td colspan="4">Fig 9 further visualizes the activity-related graphs Cki at different time periods within the same spatial subset, still</td></tr>
-  <tr><td colspan="4">using the “jumping” activity as an example. As described in the methodology section, Ck is obtained by concatenating s</td></tr>
-  <tr><td colspan="3">Fig 8. The visualizations of skeletal adjacency graph matrices without the activity-related graph.</td></tr>
 </table>
 
-![Fig 9.  The visualizations of the activity-related graphs.](assets/PLOS_ONE_ASTM_Net_Sports/fig_p24_1.png)
+As shown, ASTM-Net achieves 79.34% on CS and 82.17% on CV1, surpassing Wu et al. [27] by 2.79% and 3.16%, respectively. This validates its ability to handle occlusions (e.g., hands behind objects) and viewpoint shifts through dynamic 3A-Graphs. In CV2, ASTM-Net attains 80.45%, outperforming SkateFormer [29] by 2.25%, demonstrating robust­ ness to mixed-view training and front-view testing. However, we found some failure cases, e.g., activities like “handing objects” achieve only 71.3% accuracy due to limited inter-person relationship modeling. sequential occlusion of critical joints (e.g., hip nodes) in long-duration activities (“clean dishes”) leads to ~8% accuracy drop. This is also our future direc­ tion of improvement.
+
+H.  Visualizations
+
+Taking the activity “jumping” as an example, Fig 8 illustrates the skeletal adjacency graph matrices without the optimi­ zation of the activity-related graph C_{k}, represented by the sum of the initialized matrix A_{k} and the trainable matrix B_{k} for the three spatial subsets (k = 1,2,3). Figs 8a-8c visualize A_{1} + B_{1}, A_{2} + B_{2}, and A_{3} + B_{3}, respectively. In the visualization, darker color blocks indicate stronger node affinities, while lighter colors represent weaker relationships.
+
+The results show that:
+
+1)	In the first spatial subset, the learned adjacency graph focuses more on self-connections (indicated by the concentra­ tion of dark blocks along the diagonal). In the second and third spatial subsets, the topology focuses on the affinities between different nodes.
+
+2)	The learned adjacency graph can capture non-physical node affinities.
+
+3)	The adjacency graphs differ across the three spatial subsets, providing rich features for spatial graph convolution.
+
+Fig 9 further visualizes the activity-related graphs C_{ki} at different time periods within the same spatial subset, still using the “jumping” activity as an example. As described in the methodology section, C_{k} is obtained by concatenating s https://doi.org/10.1371/journal.pone.0324605.g009
+
+*Fig 8.  The visualizations of skeletal adjacency graph matrices without the activity-related graph.*
 
 *Fig 9.  The visualizations of the activity-related graphs.*
-
-https://doi.org/10.1371/journal.pone.0324605.g009
 
 activity-related graphs, with s = 4 as determined in last section. In Fig 9, C_{ki}  \in  R^{N}∗N, i = 1, 2, 3, 4 represents the activity-­ related graph at different time periods. Figs 9a-9d show the visualization results for C_{k}_{1}, C_{k}_{2}, C_{k}_{3}, and C_{k}_{4}, respectively.
 
@@ -719,8 +694,6 @@ Fig 10 visualizes the final learned skeletal adjacency graphs G_{ki}, i = 1, 2, 
 The results show:
 
 These findings validate our hypothesis: different samples with distinct activity patterns require different adjacency graphs to capture node affinities, and optimizing skeletal graphs with activity-related graphs over time is necessary.
-
-![Fig 10.  The 3A-Graph3A-graph visualizations with different settings.](assets/PLOS_ONE_ASTM_Net_Sports/fig_p25_1.png)
 
 *Fig 10.  The 3A-Graph3A-graph visualizations with different settings.*
 
@@ -889,52 +862,57 @@ PLOS One | https://doi.org/10.1371/journal.pone.0324605  July 8, 2025 30 / 30
 - **[p.2.6]** PLOS One | https://doi.org/10.1371/journal.pone.0324605  July 8, 2025 2 / 30
 - **[p.3.7]** 4)	The proposed ASTM-Net achieves state-of-the-art performance with significantly fewer parameters and lower compu­ tational costs compared to existing methods, making it a lightweight and efficient solution for skelecton-based activity recognition.
 - **[p.3.8]** PLOS One | https://doi.org/10.1371/journal.pone.0324605  July 8, 2025 3 / 30
-- **[p.5.9]** https://doi.org/10.1371/journal.pone.0324605.g001
-- **[p.5.10]** PLOS One | https://doi.org/10.1371/journal.pone.0324605  July 8, 2025 5 / 30
-- **[p.6.11]** PLOS One | https://doi.org/10.1371/journal.pone.0324605  July 8, 2025 6 / 30
-- **[p.7.12]** PLOS One | https://doi.org/10.1371/journal.pone.0324605  July 8, 2025 7 / 30
-- **[p.8.13]** https://doi.org/10.1371/journal.pone.0324605.g002
-- **[p.9.14]** PLOS One | https://doi.org/10.1371/journal.pone.0324605  July 8, 2025 9 / 30
-- **[p.10.15]** https://doi.org/10.1371/journal.pone.0324605.g004
-- **[p.10.16]** PLOS One | https://doi.org/10.1371/journal.pone.0324605  July 8, 2025 10 / 30
-- **[p.11.17]** PLOS One | https://doi.org/10.1371/journal.pone.0324605  July 8, 2025 11 / 30
-- **[p.12.18]** PLOS One | https://doi.org/10.1371/journal.pone.0324605  July 8, 2025 12 / 30
-- **[p.13.19]** https://doi.org/10.1371/journal.pone.0324605.g005
-- **[p.14.20]** https://doi.org/10.1371/journal.pone.0324605.g007
-- **[p.15.21]** PLOS One | https://doi.org/10.1371/journal.pone.0324605  July 8, 2025 15 / 30
-- **[p.16.22]** 2)	X-Set: Samples with even setup IDs (54,468 samples) form the training set, including 10% (5,447 samples) for valida­ tion, while odd-ID samples (58,486 samples) are used for testing.
-- **[p.16.23]** 1)	Cross-Subject (CS): Train on 11 subjects (11,550 samples), test on 7 subjects (2,200 samples).
-- **[p.16.24]** 2)	Cross-View (CV1 & CV2):
-- **[p.16.25]** PLOS One | https://doi.org/10.1371/journal.pone.0324605  July 8, 2025 16 / 30
-- **[p.17.26]** 3)	Skelecton-Only Performance: While Zhu et al. [55] incorporates multi-modal features (i.e., RGB and skelecton trajecto­ ries), our method, using only skelecton trajectories, still achieves higher recognition accuracy.
-- **[p.17.27]** PLOS One | https://doi.org/10.1371/journal.pone.0324605  July 8, 2025 17 / 30
-- **[p.19.28]** PLOS One | https://doi.org/10.1371/journal.pone.0324605  July 8, 2025 19 / 30
-- **[p.20.29]** PLOS One | https://doi.org/10.1371/journal.pone.0324605  July 8, 2025 20 / 30
-- **[p.22.30]** PLOS One | https://doi.org/10.1371/journal.pone.0324605  July 8, 2025 22 / 30
-- **[p.23.31]** https://doi.org/10.1371/journal.pone.0324605.g008
-- **[p.23.32]** PLOS One | https://doi.org/10.1371/journal.pone.0324605  July 8, 2025 23 / 30
-- **[p.24.33]** 1)	For both coarse activities (e.g., “sitting,” “clapping,” “waving”) and fine-grained activities (e.g., “writing,” “using a phone/ tablet,” “sneezing/coughing”), the learned skeletal adjacency graphs differ across time periods.
-- **[p.24.34]** 2)	For different activities with highly similar activity trajectories (e.g., “writing” and “using a phone/tablet”), the learned adjacency graphs are still distinguishable.
-- **[p.24.35]** PLOS One | https://doi.org/10.1371/journal.pone.0324605  July 8, 2025 24 / 30
-- **[p.25.36]** PLOS One | https://doi.org/10.1371/journal.pone.0324605  July 8, 2025 25 / 30
-- **[p.26.37]** 3)  Privacy-preserving HAR via federated learning.  For sensitive applications like healthcare or smart homes, federated learning (FL) can enable collaborative model training without sharing raw skeleton data. One promising direction is extending ASGM to learn personalized 3A-Graphs on distributed devices while aggregating only graph parameters, avoiding the need to transmit raw data. Another avenue is injecting noise into graph updates during FL to prevent inference attacks on user-specific motion patterns, thus ensuring privacy. Furthermore, optimizing ASTM-Net’s
-- **[p.26.38]** PLOS One | https://doi.org/10.1371/journal.pone.0324605  July 8, 2025 26 / 30
-- **[p.27.39]** PLOS One | https://doi.org/10.1371/journal.pone.0324605  July 8, 2025 27 / 30
-- **[p.28.40]** 10. Yang J, Liao T, Zhao J, Yan Y, Huang Y, Zhao Z, et al. Domain Adaptation for Sensor-Based Human Activity Recognition with a Graph Convolu­ tional Network. Mathematics. 2024;12(4):556. https://doi.org/10.3390/math12040556
-- **[p.28.41]** 11. Shin Y, Yoon Y. PGCN: Progressive graph convolutional networks for spatial–temporal traffic forecasting. IEEE Transactions on Intelligent Trans­ portation Systems. 2024.
-- **[p.28.42]** 12. Li Q, Xu P, Yang X. Spatial–Temporal Traffic Prediction With an Interactive Spatial-Enhanced Graph Convolutional Network Model. IEEE Transac­ tions on Intelligent Transportation Systems. 2024.
-- **[p.28.43]** 13. Wang L, Huang Y, Wu H. Spatial-temporal Graph Convolutional Networks with Diversified Transformation for Dynamic Graph Representation Learning. arXiv preprint. 2024. https://doi.org/arXiv:2408.02704
-- **[p.28.44]** 14. zhang X, Chen X, Tang H, Wu Y, Shen H, Li J. AdpSTGCN: Adaptive spatial–temporal graph convolutional network for traffic forecasting. Knowledge-Based Systems. 2024;301:112295. https://doi.org/10.1016/j.knosys.2024.112295
-- **[p.28.45]** 15. Li B, He M, Dai Y, Cheng X, Chen Y. 3D skeleton based action recognition by video-domain translation-scale invariant mapping and multi-scale dilated CNN. Multimed Tools Appl. 2018;77(17):22901–21. https://doi.org/10.1007/s11042-018-5642-0
-- **[p.28.46]** 16. Xie Y, Xiang J, Li X. An overview of behavioral recognition. J Information Technology and Control. 2024;53(2):619–52.
-- **[p.28.47]** 17. Kaseris M, Kostavelis I, Malassiotis S. A Comprehensive Survey on Deep Learning Methods in Human Activity Recognition. MAKE. 2024;6(2):842– 76. https://doi.org/10.3390/make6020040
-- **[p.28.48]** 18. Feng Y, Zhao Y, Zhang X, et al. Predicting spatio-temporal traffic flow: a comprehensive end-to-end approach from surveillance cameras J. Trans­ portmetrica B: Transport Dynamics, 2024, 12(1):2380915.
-- **[p.29.49]** 39. Zou H, Chen Z, Zhang J. GT-WHAR: A Generic Graph-Based Temporal Framework for Wearable Human Activity Recognition With Multiple Sen­ sors. IEEE Transactions on Emerging Topics in Computational Intelligence. 2024.
-- **[p.29.50]** 40. Islam MM, Iqbal T. Multi-GAT: A Graphical Attention-Based Hierarchical Multimodal Representation Learning Approach for Human Activity Recogni­ tion. IEEE Robot Autom Lett. 2021;6(2):1729–36. https://doi.org/10.1109/lra.2021.3059624
-- **[p.29.51]** 41. Zhang P, Lan C, Zeng W. Semantics-guided neural networks for efficient skeleton-based human action recognition. In: Proceedings of the IEEE/ CVF Conference on Computer Vision and Pattern Recognition; 2020. 1112–21.
-- **[p.29.52]** 42. Su N, Chen X, Guan J, Wang X, Zhou L, Wang J, et al. Radar Multi-Feature Graph Representation and Graph Network Fusion Target Detection Methods. Chinese Journal of Information Fusion. 2025;2(1):59–69. https://doi.org/10.62762/cjif.2025.413277
-- **[p.29.53]** 43. Zhang W, Hong Q. Modeling Brain Functional Networks Using Graph Neural Networks: A Review and Clinical Application. IECE Transactions on Intelligent Systematics. 2024;1(2):58–68. https://doi.org/10.62762/tis.2024.680959
-- **[p.29.54]** 44. Wang K, Ye C, Zhang H, et al. Graph-Driven Multimodal Feature Learning Framework for Apparent Personality Assessment J. arXiv preprint arXiv:2504.11515. 2025. https://doi.org/10.48550/arXiv.2504.11515
-- **[p.29.55]** 45. Lin KY, Zhou J, Zheng WS. Human-centric transformer for domain adaptive action recognition. IEEE Transactions on Pattern Analysis and Machine Intelligence. 2024.
-- **[p.29.56]** 46. Liu Y, Li Y, Zhang H, Zhang X, Xu D. Decoupled Knowledge Embedded Graph Convolutional Network for Skeleton-Based Human Action Recogni­ tion. IEEE Trans Circuits Syst Video Technol. 2024;34(10):9445–57. https://doi.org/10.1109/tcsvt.2024.3399126
-- **[p.29.57]** 47. Jiang Y, Deng H. Lighter and faster: A multi-scale adaptive graph convolutional network for skeleton-based action recognition. Engineering Applica­ tions of Artificial Intelligence. 2024;132:107957. https://doi.org/10.1016/j.engappai.2024.107957
+- **[p.4.9]** https://doi.org/10.1371/journal.pone.0324605.t001
+- **[p.5.10]** https://doi.org/10.1371/journal.pone.0324605.g001
+- **[p.5.11]** PLOS One | https://doi.org/10.1371/journal.pone.0324605  July 8, 2025 5 / 30
+- **[p.6.12]** PLOS One | https://doi.org/10.1371/journal.pone.0324605  July 8, 2025 6 / 30
+- **[p.7.13]** PLOS One | https://doi.org/10.1371/journal.pone.0324605  July 8, 2025 7 / 30
+- **[p.8.14]** https://doi.org/10.1371/journal.pone.0324605.g002
+- **[p.9.15]** PLOS One | https://doi.org/10.1371/journal.pone.0324605  July 8, 2025 9 / 30
+- **[p.10.16]** https://doi.org/10.1371/journal.pone.0324605.g004
+- **[p.10.17]** PLOS One | https://doi.org/10.1371/journal.pone.0324605  July 8, 2025 10 / 30
+- **[p.11.18]** PLOS One | https://doi.org/10.1371/journal.pone.0324605  July 8, 2025 11 / 30
+- **[p.12.19]** PLOS One | https://doi.org/10.1371/journal.pone.0324605  July 8, 2025 12 / 30
+- **[p.13.20]** https://doi.org/10.1371/journal.pone.0324605.g005
+- **[p.14.21]** https://doi.org/10.1371/journal.pone.0324605.g007
+- **[p.15.22]** PLOS One | https://doi.org/10.1371/journal.pone.0324605  July 8, 2025 15 / 30
+- **[p.16.23]** 2)	X-Set: Samples with even setup IDs (54,468 samples) form the training set, including 10% (5,447 samples) for valida­ tion, while odd-ID samples (58,486 samples) are used for testing.
+- **[p.16.24]** 1)	Cross-Subject (CS): Train on 11 subjects (11,550 samples), test on 7 subjects (2,200 samples).
+- **[p.16.25]** 2)	Cross-View (CV1 & CV2):
+- **[p.16.26]** PLOS One | https://doi.org/10.1371/journal.pone.0324605  July 8, 2025 16 / 30
+- **[p.17.27]** 3)	Skelecton-Only Performance: While Zhu et al. [55] incorporates multi-modal features (i.e., RGB and skelecton trajecto­ ries), our method, using only skelecton trajectories, still achieves higher recognition accuracy.
+- **[p.17.28]** PLOS One | https://doi.org/10.1371/journal.pone.0324605  July 8, 2025 17 / 30
+- **[p.19.29]** https://doi.org/10.1371/journal.pone.0324605.t005
+- **[p.19.30]** PLOS One | https://doi.org/10.1371/journal.pone.0324605  July 8, 2025 19 / 30
+- **[p.20.31]** https://doi.org/10.1371/journal.pone.0324605.t007
+- **[p.20.32]** PLOS One | https://doi.org/10.1371/journal.pone.0324605  July 8, 2025 20 / 30
+- **[p.21.33]** https://doi.org/10.1371/journal.pone.0324605.t009
+- **[p.22.34]** https://doi.org/10.1371/journal.pone.0324605.t010
+- **[p.22.35]** PLOS One | https://doi.org/10.1371/journal.pone.0324605  July 8, 2025 22 / 30
+- **[p.23.36]** https://doi.org/10.1371/journal.pone.0324605.g008
+- **[p.23.37]** PLOS One | https://doi.org/10.1371/journal.pone.0324605  July 8, 2025 23 / 30
+- **[p.24.38]** 1)	For both coarse activities (e.g., “sitting,” “clapping,” “waving”) and fine-grained activities (e.g., “writing,” “using a phone/ tablet,” “sneezing/coughing”), the learned skeletal adjacency graphs differ across time periods.
+- **[p.24.39]** 2)	For different activities with highly similar activity trajectories (e.g., “writing” and “using a phone/tablet”), the learned adjacency graphs are still distinguishable.
+- **[p.24.40]** PLOS One | https://doi.org/10.1371/journal.pone.0324605  July 8, 2025 24 / 30
+- **[p.25.41]** PLOS One | https://doi.org/10.1371/journal.pone.0324605  July 8, 2025 25 / 30
+- **[p.26.42]** 3)  Privacy-preserving HAR via federated learning.  For sensitive applications like healthcare or smart homes, federated learning (FL) can enable collaborative model training without sharing raw skeleton data. One promising direction is extending ASGM to learn personalized 3A-Graphs on distributed devices while aggregating only graph parameters, avoiding the need to transmit raw data. Another avenue is injecting noise into graph updates during FL to prevent inference attacks on user-specific motion patterns, thus ensuring privacy. Furthermore, optimizing ASTM-Net’s
+- **[p.26.43]** PLOS One | https://doi.org/10.1371/journal.pone.0324605  July 8, 2025 26 / 30
+- **[p.27.44]** PLOS One | https://doi.org/10.1371/journal.pone.0324605  July 8, 2025 27 / 30
+- **[p.28.45]** 10. Yang J, Liao T, Zhao J, Yan Y, Huang Y, Zhao Z, et al. Domain Adaptation for Sensor-Based Human Activity Recognition with a Graph Convolu­ tional Network. Mathematics. 2024;12(4):556. https://doi.org/10.3390/math12040556
+- **[p.28.46]** 11. Shin Y, Yoon Y. PGCN: Progressive graph convolutional networks for spatial–temporal traffic forecasting. IEEE Transactions on Intelligent Trans­ portation Systems. 2024.
+- **[p.28.47]** 12. Li Q, Xu P, Yang X. Spatial–Temporal Traffic Prediction With an Interactive Spatial-Enhanced Graph Convolutional Network Model. IEEE Transac­ tions on Intelligent Transportation Systems. 2024.
+- **[p.28.48]** 13. Wang L, Huang Y, Wu H. Spatial-temporal Graph Convolutional Networks with Diversified Transformation for Dynamic Graph Representation Learning. arXiv preprint. 2024. https://doi.org/arXiv:2408.02704
+- **[p.28.49]** 14. zhang X, Chen X, Tang H, Wu Y, Shen H, Li J. AdpSTGCN: Adaptive spatial–temporal graph convolutional network for traffic forecasting. Knowledge-Based Systems. 2024;301:112295. https://doi.org/10.1016/j.knosys.2024.112295
+- **[p.28.50]** 15. Li B, He M, Dai Y, Cheng X, Chen Y. 3D skeleton based action recognition by video-domain translation-scale invariant mapping and multi-scale dilated CNN. Multimed Tools Appl. 2018;77(17):22901–21. https://doi.org/10.1007/s11042-018-5642-0
+- **[p.28.51]** 16. Xie Y, Xiang J, Li X. An overview of behavioral recognition. J Information Technology and Control. 2024;53(2):619–52.
+- **[p.28.52]** 17. Kaseris M, Kostavelis I, Malassiotis S. A Comprehensive Survey on Deep Learning Methods in Human Activity Recognition. MAKE. 2024;6(2):842– 76. https://doi.org/10.3390/make6020040
+- **[p.28.53]** 18. Feng Y, Zhao Y, Zhang X, et al. Predicting spatio-temporal traffic flow: a comprehensive end-to-end approach from surveillance cameras J. Trans­ portmetrica B: Transport Dynamics, 2024, 12(1):2380915.
+- **[p.29.54]** 39. Zou H, Chen Z, Zhang J. GT-WHAR: A Generic Graph-Based Temporal Framework for Wearable Human Activity Recognition With Multiple Sen­ sors. IEEE Transactions on Emerging Topics in Computational Intelligence. 2024.
+- **[p.29.55]** 40. Islam MM, Iqbal T. Multi-GAT: A Graphical Attention-Based Hierarchical Multimodal Representation Learning Approach for Human Activity Recogni­ tion. IEEE Robot Autom Lett. 2021;6(2):1729–36. https://doi.org/10.1109/lra.2021.3059624
+- **[p.29.56]** 41. Zhang P, Lan C, Zeng W. Semantics-guided neural networks for efficient skeleton-based human action recognition. In: Proceedings of the IEEE/ CVF Conference on Computer Vision and Pattern Recognition; 2020. 1112–21.
+- **[p.29.57]** 42. Su N, Chen X, Guan J, Wang X, Zhou L, Wang J, et al. Radar Multi-Feature Graph Representation and Graph Network Fusion Target Detection Methods. Chinese Journal of Information Fusion. 2025;2(1):59–69. https://doi.org/10.62762/cjif.2025.413277
+- **[p.29.58]** 43. Zhang W, Hong Q. Modeling Brain Functional Networks Using Graph Neural Networks: A Review and Clinical Application. IECE Transactions on Intelligent Systematics. 2024;1(2):58–68. https://doi.org/10.62762/tis.2024.680959
+- **[p.29.59]** 44. Wang K, Ye C, Zhang H, et al. Graph-Driven Multimodal Feature Learning Framework for Apparent Personality Assessment J. arXiv preprint arXiv:2504.11515. 2025. https://doi.org/10.48550/arXiv.2504.11515
+- **[p.29.60]** 45. Lin KY, Zhou J, Zheng WS. Human-centric transformer for domain adaptive action recognition. IEEE Transactions on Pattern Analysis and Machine Intelligence. 2024.
+- **[p.29.61]** 46. Liu Y, Li Y, Zhang H, Zhang X, Xu D. Decoupled Knowledge Embedded Graph Convolutional Network for Skeleton-Based Human Action Recogni­ tion. IEEE Trans Circuits Syst Video Technol. 2024;34(10):9445–57. https://doi.org/10.1109/tcsvt.2024.3399126
+- **[p.29.62]** 47. Jiang Y, Deng H. Lighter and faster: A multi-scale adaptive graph convolutional network for skeleton-based action recognition. Engineering Applica­ tions of Artificial Intelligence. 2024;132:107957. https://doi.org/10.1016/j.engappai.2024.107957
