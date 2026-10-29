@@ -43,6 +43,11 @@ class ExtractorConfig:
     models_dir: Optional[str] = None
     onnx_model_path: Optional[str] = None
 
+    # Parámetros de Visión Híbrida Local (OCR por compuerta selectiva)
+    enable_local_vision: bool = True
+    local_ocr_engine: str = "rapidocr"  # "rapidocr" | "none"
+    ocr_dpi: int = 200
+
     def config_hash(self) -> str:
         """Calcula un hash determinista de los parámetros que afectan la salida."""
         payload = asdict(self)

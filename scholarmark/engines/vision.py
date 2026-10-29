@@ -60,6 +60,8 @@ class VisionEngine(BaseEngine):
         self.table_recognizer = TableRecognizer(
             device=config.device,
             onnx_model_path=config.onnx_model_path,
+            enable_local_vision=getattr(config, "enable_local_vision", True),
+            ocr_dpi=getattr(config, "ocr_dpi", 200),
         )
         self.algorithm_recognizer = AlgorithmRecognizer()
 

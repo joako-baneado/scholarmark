@@ -26,9 +26,17 @@ class TableRecognizer:
     Reconstructor de estructura lógica de tablas científicas.
     """
 
-    def __init__(self, device: str = "auto", onnx_model_path: Optional[str] = None):
+    def __init__(
+        self,
+        device: str = "auto",
+        onnx_model_path: Optional[str] = None,
+        enable_local_vision: bool = True,
+        ocr_dpi: int = 200,
+    ):
         self.device = device
         self.onnx_model_path = onnx_model_path
+        self.enable_local_vision = enable_local_vision
+        self.ocr_dpi = ocr_dpi
         self.last_fallback_triggered: bool = False
 
     @staticmethod
@@ -52,53 +60,165 @@ class TableRecognizer:
             segments.append((start, prev))
         return segments
 
+    def _reconstruct_table_from_ocr_words(
+        self,
+        ocr_words: List[Tuple[BoundingBox, str, float]],
+        bbox: BoundingBox,
+    ) -> Optional[Tuple[str, Optional[str], bool]]:
+        """
+        Reconstruye la rejilla de filas y columnas a partir de spans extraídos por OCR local,
+        alineándolos mediante anclajes columnares y produciendo HTML semántico y GFM.
+        """
+        items: List[Tuple[BoundingBox, str]] = []
+        for wb, txt, conf in ocr_words:
+            cleaned = _clean_cell_text(txt)
+            if cleaned:
+                items.append((wb, cleaned))
+
+        if len(items) < 4:
+            return None
+
+        items.sort(key=lambda it: ((it[0].y0 + it[0].y1) * 0.5, it[0].x0))
+        raw_rows: List[List[Tuple[BoundingBox, str]]] = []
+        for wb, txt in items:
+            w_cy = (wb.y0 + wb.y1) * 0.5
+            placed = False
+            for r in raw_rows:
+                r_y0 = min(x[0].y0 for x in r)
+                r_y1 = max(x[0].y1 for x in r)
+                r_cy = (r_y0 + r_y1) * 0.5
+                if abs(w_cy - r_cy) <= max(4.0, (r_y1 - r_y0) * 0.55):
+                    r.append((wb, txt))
+                    placed = True
+                    break
+            if not placed:
+                raw_rows.append([(wb, txt)])
+
+        cell_rows: List[List[Tuple[BoundingBox, str]]] = []
+        for r in raw_rows:
+            r.sort(key=lambda it: it[0].x0)
+            merged_cells: List[Tuple[BoundingBox, str]] = []
+            for wb, txt in r:
+                if not merged_cells:
+                    merged_cells.append((wb, txt))
+                else:
+                    prev_box, prev_txt = merged_cells[-1]
+                    gap = wb.x0 - prev_box.x1
+                    if gap <= 6.0:
+                        merged_cells[-1] = (prev_box.union(wb), f"{prev_txt} {txt}")
+                    else:
+                        merged_cells.append((wb, txt))
+            cell_rows.append(merged_cells)
+
+        if not cell_rows:
+            return None
+
+        col_anchors = self._infer_column_anchors(cell_rows)
+        num_cols = len(col_anchors)
+        if num_cols == 0:
+            return None
+
+        structured_rows: List[List[Dict[str, Any]]] = []
+        has_merged = False
+
+        for r_idx, row in enumerate(cell_rows):
+            mapped_row: List[Dict[str, Any]] = []
+            occupied_cols = set()
+
+            for c_box, c_txt in row:
+                spanned: List[int] = []
+                for col_i, (ax0, ax1) in enumerate(col_anchors):
+                    if col_i in occupied_cols:
+                        continue
+                    col_center = (ax0 + ax1) * 0.5
+                    overlap = min(c_box.x1, ax1) - max(c_box.x0, ax0)
+                    if overlap > 2.0 or (c_box.x0 - 6.0) <= col_center <= (c_box.x1 + 6.0):
+                        spanned.append(col_i)
+
+                if not spanned:
+                    c_center = (c_box.x0 + c_box.x1) * 0.5
+                    free_cols = [ci for ci in range(num_cols) if ci not in occupied_cols]
+                    if free_cols:
+                        best_col = min(free_cols, key=lambda ci: abs(((col_anchors[ci][0] + col_anchors[ci][1]) * 0.5) - c_center))
+                        spanned = [best_col]
+
+                if spanned:
+                    col_start = min(spanned)
+                    col_end = max(spanned)
+                    span_width = col_end - col_start + 1
+                    for ci in range(col_start, col_end + 1):
+                        occupied_cols.add(ci)
+                    if span_width > 1:
+                        has_merged = True
+                    mapped_row.append({
+                        "col_start": col_start,
+                        "colspan": span_width,
+                        "rowspan": 1,
+                        "text": c_txt,
+                    })
+
+            mapped_row.sort(key=lambda item: item["col_start"])
+            structured_rows.append(mapped_row)
+
+        html_lines = ['<table data-source="local-ocr">']
+        for r_idx, m_row in enumerate(structured_rows):
+            is_header = (r_idx == 0)
+            tag = "th" if is_header else "td"
+            row_cells_html: List[str] = []
+            for cell in m_row:
+                attrs = []
+                if cell["colspan"] > 1:
+                    attrs.append(f'colspan="{cell["colspan"]}"')
+                if cell["rowspan"] > 1:
+                    attrs.append(f'rowspan="{cell["rowspan"]}"')
+                attr_str = (" " + " ".join(attrs)) if attrs else ""
+                escaped_txt = html.escape(cell["text"])
+                row_cells_html.append(f"<{tag}{attr_str}>{escaped_txt}</{tag}>")
+            html_lines.append("  <tr>" + "".join(row_cells_html) + "</tr>")
+        html_lines.append("</table>")
+        html_out = "\n".join(html_lines)
+
+        gfm_out: Optional[str] = None
+        if not has_merged and structured_rows:
+            gfm_rows: List[List[str]] = []
+            for m_row in structured_rows:
+                by_col = {c["col_start"]: c["text"] for c in m_row}
+                gfm_rows.append([by_col.get(ci, "") for ci in range(num_cols)])
+            if gfm_rows:
+                hdr = "| " + " | ".join(gfm_rows[0]) + " |"
+                sep = "| " + " | ".join(["---"] * num_cols) + " |"
+                body = ["| " + " | ".join(r) + " |" for r in gfm_rows[1:]]
+                gfm_out = "\n".join([hdr, sep] + body)
+
+        return html_out, gfm_out, has_merged
+
     def _reconstruct_raster_table(
         self,
         page: fitz.Page,
         bbox: BoundingBox
     ) -> Tuple[str, Optional[str], bool]:
         """
-        Reconstruye una tabla incrustada como imagen ráster (sin spans nativos) mediante:
-        1. OCR selectivo por región (si Tesseract está disponible), o
+        Reconstruye una tabla incrustada como imagen ráster o trazado vectorial sin spans
+        mediante:
+        1. Visión híbrida local selectiva (LocalOCREngine con RapidOCR en ONNX), o
         2. Proyección de perfiles morfológicos horizontales y verticales sobre el Pixmap.
         """
         self.last_fallback_triggered = True
-        clip = bbox.pad(2.0, page.rect).to_fitz_rect()
 
-        try:
-            tp = page.get_textpage_ocr(flags=0, dpi=200, full=False, clip=clip)
-            ocr_words = page.get_text("words", textpage=tp, clip=clip)
-            if ocr_words and len(ocr_words) >= 4:
-                items = [
-                    (BoundingBox(float(w[0]), float(w[1]), float(w[2]), float(w[3])), str(w[4]).strip())
-                    for w in ocr_words if str(w[4]).strip()
-                ]
-                if items:
-                    items.sort(key=lambda it: ((it[0].y0 + it[0].y1) * 0.5, it[0].x0))
-                    rows: List[List[str]] = []
-                    cur_row: List[Tuple[BoundingBox, str]] = []
-                    for wb, txt in items:
-                        if not cur_row or abs(((wb.y0 + wb.y1) * 0.5) - ((cur_row[0][0].y0 + cur_row[0][0].y1) * 0.5)) <= 8.0:
-                            cur_row.append((wb, txt))
-                        else:
-                            cur_row.sort(key=lambda x: x[0].x0)
-                            rows.append([x[1] for x in cur_row])
-                            cur_row = [(wb, txt)]
-                    if cur_row:
-                        cur_row.sort(key=lambda x: x[0].x0)
-                        rows.append([x[1] for x in cur_row])
-                    if len(rows) >= 2:
-                        cols = max(len(r) for r in rows)
-                        html_lines = ['<table data-source="raster-ocr">']
-                        for r_i, r in enumerate(rows):
-                            tag = "th" if r_i == 0 else "td"
-                            padded = r + [""] * (cols - len(r))
-                            cells = "".join(f"<{tag}>{html.escape(c)}</{tag}>" for c in padded)
-                            html_lines.append(f"  <tr>{cells}</tr>")
-                        html_lines.append("</table>")
-                        return "\n".join(html_lines), None, False
-        except Exception:
-            pass
+        if getattr(self, "enable_local_vision", True):
+            try:
+                from .ocr_engine import LocalOCREngine
+                if LocalOCREngine.is_available():
+                    engine = LocalOCREngine()
+                    ocr_words = engine.extract_words_from_region(page, bbox, dpi=self.ocr_dpi)
+                    if ocr_words and len(ocr_words) >= 4:
+                        res = self._reconstruct_table_from_ocr_words(ocr_words, bbox)
+                        if res is not None:
+                            return res
+            except Exception:
+                pass
+
+        clip = bbox.pad(2.0, page.rect).to_fitz_rect()
 
         try:
             import numpy as np
