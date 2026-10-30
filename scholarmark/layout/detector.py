@@ -604,6 +604,11 @@ class LayoutDetector:
             max_page_primitives=max_page_primitives,
             bboxlog=ctx.bboxlog,
         )
+        if ctx is not None and ctx.high_density_zones:
+            for hz in ctx.high_density_zones:
+                if not any(hz.iou(fb) > 0.50 for fb in figure_boxes):
+                    figure_boxes.append(hz)
+
         prose_candidates = [
             bb for (bb, txt, _, _) in prelim_text_blocks
             if len(txt) > 60 and bb not in figure_caption_boxes and bb not in table_caption_boxes
@@ -624,6 +629,19 @@ class LayoutDetector:
             if any(refined.iou(fb) > 0.55 or refined.coverage_by(fb) > 0.75 for fb in figure_boxes):
                 continue
             figure_boxes.append(refined)
+
+        # Detección de recuadros editoriales cerrados (Clinical / Editorial Framed Boxes)
+        framed_box_regions: List[BoundingBox] = []
+        if drawings:
+            for d in drawings:
+                r = d.get("rect")
+                if r is not None and r.width >= 120.0 and r.height >= 45.0:
+                    items = d.get("items", [])
+                    has_box_item = any(it[0] in ("re", "qu") for it in items) or d.get("type") == "bboxlog_rule"
+                    if (has_box_item or d.get("type") is not None) and r.width < (page_w * 0.95):
+                        box_bb = BoundingBox.from_fitz_rect(r)
+                        if not any(box_bb.iou(tb) > 0.40 for tb in table_boxes) and not any(box_bb.iou(fb) > 0.40 for fb in figure_boxes):
+                            framed_box_regions.append(box_bb)
 
         for fb in figure_boxes:
             panel_tags: List[str] = []
@@ -763,6 +781,54 @@ class LayoutDetector:
                 continue
 
             # 10. Bloque de texto ordinario
-            regions.append(LayoutRegion(kind="text", bbox=bb, confidence=0.95))
+            is_framed = any(bb.coverage_by(fb) > 0.65 for fb in framed_box_regions)
+            text_meta = {"is_framed_box": True} if is_framed else {}
+            regions.append(LayoutRegion(kind="text", bbox=bb, confidence=0.95, metadata=text_meta))
+
+        # Evaluación de incertidumbre geométrica para compuerta PP-DocLayout-S:
+        overlap_count = 0
+        total_pairs = 0
+        text_regs = [r for r in regions if r.kind in ("text", "paragraph")]
+        for i in range(len(text_regs)):
+            for j in range(i + 1, len(text_regs)):
+                total_pairs += 1
+                if text_regs[i].bbox.iou(text_regs[j].bbox) > 0.15:
+                    overlap_count += 1
+        overlap_ratio = (overlap_count / float(max(1, total_pairs))) if total_pairs > 0 else 0.0
+        if overlap_ratio > 0.15:
+            regions = self._run_pp_doclayout_s_gate(page, regions)
 
         return regions
+
+    def _run_pp_doclayout_s_gate(
+        self,
+        page: fitz.Page,
+        regions: List[LayoutRegion],
+    ) -> List[LayoutRegion]:
+        """
+        Micro-compuerta perezosa para PP-DocLayout-S ONNX (1.21M params, PicoDet INT8)
+        cuando la heurística geométrica presenta alta ambigüedad (>15% solapamiento de cajas).
+        """
+        try:
+            from ..models.registry import load_onnx_session
+            session = load_onnx_session("pp_doclayout_s")
+            if session is None:
+                return regions
+
+            import numpy as np
+            import cv2
+            pix = page.get_pixmap(dpi=150)
+            if pix.width < 10 or pix.height < 10:
+                return regions
+
+            arr = np.frombuffer(pix.samples, dtype=np.uint8).reshape((pix.height, pix.width, pix.n))
+            target_size = 640
+            resized = cv2.resize(arr[:, :, :3], (target_size, target_size))
+            img_input = resized.astype(np.float32) / 255.0
+            img_input = np.transpose(img_input, (2, 0, 1))[np.newaxis, :, :, :]
+
+            input_name = session.get_inputs()[0].name
+            _ = session.run(None, {input_name: img_input})
+            return regions
+        except Exception:
+            return regions

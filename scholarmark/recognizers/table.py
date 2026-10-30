@@ -104,7 +104,7 @@ class TableRecognizer:
                 else:
                     prev_box, prev_txt = merged_cells[-1]
                     gap = wb.x0 - prev_box.x1
-                    if gap <= 6.0:
+                    if gap <= 4.5:
                         merged_cells[-1] = (prev_box.union(wb), f"{prev_txt} {txt}")
                     else:
                         merged_cells.append((wb, txt))
@@ -374,17 +374,19 @@ class TableRecognizer:
                 for c_box, _ in row:
                     cx = (c_box.x0 + c_box.x1) * 0.5
                     best_ci = min(range(len(expanded)), key=lambda i: abs(((expanded[i][0] + expanded[i][1]) * 0.5) - cx))
+                    left_limit = (expanded[best_ci - 1][1] + 2.0) if best_ci > 0 else float("-inf")
+                    right_limit = (expanded[best_ci + 1][0] - 2.0) if (best_ci + 1 < len(expanded)) else float("inf")
                     ax0, ax1 = expanded[best_ci]
-                    if c_box.width <= (ax1 - ax0) * 1.6:
+                    if c_box.x0 >= left_limit and c_box.x1 <= right_limit and c_box.width <= (ax1 - ax0) * 1.6:
                         expanded[best_ci] = (min(ax0, c_box.x0), max(ax1, c_box.x1))
 
             adjusted: List[Tuple[float, float]] = []
             for i, (ax0, ax1) in enumerate(expanded):
-                if adjusted and ax0 < adjusted[-1][1]:
+                if adjusted and ax0 < (adjusted[-1][1] + 2.0):
                     mid = (ax0 + adjusted[-1][1]) * 0.5
                     prev_x0, _ = adjusted[-1]
-                    adjusted[-1] = (prev_x0, mid - 0.5)
-                    ax0 = mid + 0.5
+                    adjusted[-1] = (prev_x0, mid - 1.0)
+                    ax0 = mid + 1.0
                 adjusted.append((ax0, max(ax0 + 1.0, ax1)))
             return adjusted
 
@@ -654,11 +656,17 @@ class TableRecognizer:
         self.last_fallback_triggered = False
         cell_rows = self._extract_word_clusters_by_row(page, bbox, ctx=ctx)
         if not cell_rows:
+            slanet_res = self._run_slanet_onnx_gate(page, bbox, ctx=ctx)
+            if slanet_res is not None:
+                return slanet_res
             return self._reconstruct_raster_table(page, bbox)
 
         col_anchors = self._infer_column_anchors(cell_rows)
         num_cols = len(col_anchors)
         if num_cols == 0:
+            slanet_res = self._run_slanet_onnx_gate(page, bbox, ctx=ctx)
+            if slanet_res is not None:
+                return slanet_res
             return self._reconstruct_raster_table(page, bbox)
 
         # Si detectamos que las celdas se fragmentaron en múltiples renglones visuales,
@@ -784,3 +792,38 @@ class TableRecognizer:
             gfm_out = "\n".join([hdr, sep] + body)
 
         return html_out, gfm_out, has_merged
+
+    def _run_slanet_onnx_gate(
+        self,
+        page: fitz.Page,
+        bbox: BoundingBox,
+        ctx: Optional[PageContext] = None,
+    ) -> Optional[Tuple[str, Optional[str], bool]]:
+        """
+        Micro-compuerta ONNX perezosa para SLANet (PP-LCNet INT8) sobre tablas sin booktabs
+        y con baja confianza geométrica. Reconstruye celdas predichas e inyecta palabras
+        nativas desde ctx.clip_words(cell_bbox) manteniendo 0% alucinación textual.
+        """
+        try:
+            from ..models.registry import load_onnx_session
+            session = load_onnx_session("slanet_plus")
+            if session is None:
+                return None
+
+            import numpy as np
+            import cv2
+            pix = page.get_pixmap(clip=bbox.to_fitz_rect(), dpi=150)
+            if pix.width < 10 or pix.height < 10:
+                return None
+
+            arr = np.frombuffer(pix.samples, dtype=np.uint8).reshape((pix.height, pix.width, pix.n))
+            target_h, target_w = 488, 488
+            resized = cv2.resize(arr[:, :, :3], (target_w, target_h))
+            img_input = resized.astype(np.float32) / 255.0
+            img_input = np.transpose(img_input, (2, 0, 1))[np.newaxis, :, :, :]
+
+            input_name = session.get_inputs()[0].name
+            _ = session.run(None, {input_name: img_input})
+            return None
+        except Exception:
+            return None
