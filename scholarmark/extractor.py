@@ -160,6 +160,7 @@ class ScholarExtractor:
                 if not self.config.skip_manifest
                 else None
             )
+            del ir
 
             elapsed = time.time() - start_time
             fig_count = get_figure_count(asset_dir) if asset_dir else 0

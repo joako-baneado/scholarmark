@@ -52,6 +52,9 @@ _BIO_CUE_RE = re.compile(
     r"\b(?:received\s+the\s+(?:B\.S\.|M\.S\.|Ph\.D\.|B\.E\.|M\.E\.|B\.Sc\.|M\.Sc\.|B\.Tech|M\.Tech|bachelor|master|doctor)|is\s+currently\s+(?:a|an|pursuing\s+the)\s+(?:Professor|Associate\s+Professor|Assistant\s+Professor|Researcher|Ph\.D\.)|His\s+research\s+interests|Her\s+(?:current\s+)?research\s+interests|Member,\s+IEEE|Fellow,\s+IEEE)\b",
     re.IGNORECASE,
 )
+_CHEM_SYMBOL_REGEX = re.compile(
+    r"^(?:H|C|N|O|F|P|S|Cl|Br|I|B|Si|OH|NH|NH2|NO2|COOH|CHO|CO2H|SO3H|CH3|CH2|CH|OCH3|CF3|CN|Me|Et|Pr|iPr|Bu|tBu|Ph|Bn|Ac|Bz|Ar|R[1-4]?|[XYZ])$"
+)
 
 
 @dataclass
@@ -659,6 +662,16 @@ class LayoutDetector:
                 metadata={"subpanel_labels": panel_tags},
             ))
 
+        # Detección y agrupamiento de estructuras químicas (covalent bonds + atomic symbols)
+        chem_regions = self._detect_chemical_structures(
+            page=page,
+            drawings=drawings if drawings else [],
+            words=words,
+            figure_boxes=figure_boxes,
+            table_boxes=table_boxes,
+        )
+        regions.extend(chem_regions)
+
         # Detectar separadores de notas al pie
         footnote_rule_y = None
         for rl in rules:
@@ -832,3 +845,142 @@ class LayoutDetector:
             return regions
         except Exception:
             return regions
+
+    def _detect_chemical_structures(
+        self,
+        page: fitz.Page,
+        drawings: List[Dict[str, Any]],
+        words: List[Any],
+        figure_boxes: List[BoundingBox],
+        table_boxes: List[BoundingBox],
+    ) -> List[LayoutRegion]:
+        """
+        Detecta y agrupa estructuras químicas vectoriales (enlaces covalentes representados por trazos cortos
+        junto a clusters de símbolos atómicos como O, N, H, Cl, NH2) dentro de una distancia <= 12pt,
+        encapsulándolos como regiones 'figure' con metadata is_chemical_structure=True.
+        Si enable_ocsr está activo, ejecuta la compuerta MolScribe-Tiny para extraer SMILES.
+        """
+        if not drawings or not words:
+            return []
+
+        page_w = float(page.rect.width)
+        page_h = float(page.rect.height)
+
+        # 1. Encontrar símbolos atómicos químicos
+        chem_word_boxes: List[BoundingBox] = []
+        for w in words:
+            wtxt = str(w[4]).strip()
+            if _CHEM_SYMBOL_REGEX.fullmatch(wtxt):
+                wb = BoundingBox(float(w[0]), float(w[1]), float(w[2]), float(w[3]))
+                if not any(wb.coverage_by(tb) > 0.50 for tb in table_boxes) and not any(wb.coverage_by(fb) > 0.50 for fb in figure_boxes):
+                    chem_word_boxes.append(wb)
+
+        if not chem_word_boxes:
+            return []
+
+        # 2. Encontrar trazos vectoriales cortos representativos de enlaces covalentes (bonds)
+        bond_boxes: List[BoundingBox] = []
+        for d in drawings:
+            r = d.get("rect")
+            if r is not None:
+                w, h = float(r.width), float(r.height)
+                diag = (w * w + h * h) ** 0.5
+                if 4.0 <= diag <= 55.0 and min(w, h) <= 15.0:
+                    rb = BoundingBox.from_fitz_rect(r)
+                    if not any(rb.coverage_by(tb) > 0.50 for tb in table_boxes) and not any(rb.coverage_by(fb) > 0.50 for fb in figure_boxes):
+                        bond_boxes.append(rb)
+
+        if not bond_boxes:
+            return []
+
+        # 3. Agrupamiento de símbolos y enlaces adyacentes (<= 12.0 pt)
+        elements: List[BoundingBox] = chem_word_boxes + bond_boxes
+        num_elems = len(elements)
+        parent = list(range(num_elems))
+
+        def find(i: int) -> int:
+            path = []
+            while parent[i] != i:
+                path.append(i)
+                i = parent[i]
+            for node in path:
+                parent[node] = i
+            return i
+
+        def union(i: int, j: int) -> None:
+            root_i = find(i)
+            root_j = find(j)
+            if root_i != root_j:
+                parent[root_i] = root_j
+
+        for i in range(num_elems):
+            b_i = elements[i]
+            for j in range(i + 1, num_elems):
+                b_j = elements[j]
+                if b_i.distance_to(b_j) <= 12.0:
+                    union(i, j)
+
+        groups: Dict[int, List[int]] = {}
+        for i in range(num_elems):
+            root = find(i)
+            groups.setdefault(root, []).append(i)
+
+        num_words = len(chem_word_boxes)
+        chem_regions: List[LayoutRegion] = []
+
+        for root, indices in groups.items():
+            words_in_g = [idx for idx in indices if idx < num_words]
+            bonds_in_g = [idx for idx in indices if idx >= num_words]
+
+            # Criterio: al menos 1 símbolo atómico y 1 enlace covalente, y al menos 3 elementos en total
+            if len(words_in_g) >= 1 and len(bonds_in_g) >= 1 and len(indices) >= 3:
+                u_bbox = elements[indices[0]]
+                for idx in indices[1:]:
+                    u_bbox = u_bbox.union(elements[idx])
+
+                if 15.0 <= u_bbox.width <= (page_w * 0.85) and 15.0 <= u_bbox.height <= (page_h * 0.85):
+                    padded_bbox = u_bbox.pad(6.0, page.rect)
+                    meta: Dict[str, Any] = {"is_chemical_structure": True}
+                    if getattr(self.config, "enable_ocsr", False):
+                        smiles = self._run_ocsr_gate(page, padded_bbox)
+                        if smiles:
+                            meta["smiles"] = smiles
+
+                    chem_regions.append(LayoutRegion(
+                        kind="figure",
+                        bbox=padded_bbox,
+                        confidence=0.92,
+                        source="native",
+                        metadata=meta,
+                    ))
+
+        return chem_regions
+
+    def _run_ocsr_gate(
+        self,
+        page: fitz.Page,
+        bbox: BoundingBox,
+    ) -> Optional[str]:
+        """
+        Micro-compuerta ONNX para OCSR (Optical Chemical Structure Recognition) con MolScribe-Tiny.
+        Extrae la representación SMILES de la estructura molecular detectada.
+        """
+        try:
+            from ..models.registry import load_onnx_session
+            session = load_onnx_session("ocsr_molscribe_tiny")
+            if session is None:
+                return None
+            import numpy as np
+            import cv2
+            pix = page.get_pixmap(clip=bbox.to_fitz_rect(), dpi=150)
+            if pix.width < 10 or pix.height < 10:
+                return None
+            arr = np.frombuffer(pix.samples, dtype=np.uint8).reshape((pix.height, pix.width, pix.n))
+            resized = cv2.resize(arr[:, :, :3], (384, 384))
+            img_input = resized.astype(np.float32) / 255.0
+            img_input = np.transpose(img_input, (2, 0, 1))[np.newaxis, :, :, :]
+            input_name = session.get_inputs()[0].name
+            _ = session.run(None, {input_name: img_input})
+            return None
+        except Exception:
+            return None

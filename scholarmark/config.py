@@ -47,6 +47,7 @@ class ExtractorConfig:
     enable_local_vision: bool = True
     local_ocr_engine: str = "rapidocr"  # "rapidocr" | "none"
     ocr_dpi: int = 200
+    enable_ocsr: bool = False
 
     def config_hash(self) -> str:
         """Calcula un hash determinista de los parámetros que afectan la salida."""

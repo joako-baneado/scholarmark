@@ -106,6 +106,18 @@ class BoundingBox:
             return 0.0
         return float((ix1 - ix0) * (iy1 - iy0))
 
+    def distance_to(self, other: Any) -> float:
+        """Calcula la distancia mínima euclidiana entre los bordes de dos cajas (0 si se intersecan)."""
+        if isinstance(other, fitz.Rect):
+            ox0, oy0, ox1, oy1 = other.x0, other.y0, other.x1, other.y1
+        elif isinstance(other, BoundingBox):
+            ox0, oy0, ox1, oy1 = other.x0, other.y0, other.x1, other.y1
+        else:
+            return float("inf")
+        dx = max(0.0, self.x0 - ox1, ox0 - self.x1)
+        dy = max(0.0, self.y0 - oy1, oy0 - self.y1)
+        return (dx * dx + dy * dy) ** 0.5
+
     def iou(self, other: Any) -> float:
         """Calcula Intersection over Union (IoU) entre dos cajas."""
         inter = self.intersection_area(other)
