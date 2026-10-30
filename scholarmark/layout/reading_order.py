@@ -104,13 +104,16 @@ def order_page_blocks(
     column_zones: Optional[List[Tuple[float, float, float, float]]] = None,
 ) -> List[Block]:
     """
-    Calcula el orden de lectura topológico DAG de una página:
+    Calcula el orden de lectura topológico DAG de una página con XY-Cut++ y enmascaramiento jerárquico:
     1. Filtra bloques 'abandon'.
     2. Segrega 'footnote' al final de la página para evitar que se intercalen entre columnas.
-    3. Utiliza bloques de ancho completo o elementos que cruzan medianeras (títulos, figuras/tablas
-       de doble columna) como barreras de sincronización XY-Cut, aplicando ordenamiento de N columnas
-       en cada banda intermedia.
-    4. Agrupa las biografías de autores ('author_bio') por columna al cierre del cuerpo.
+    3. Identifica elementos flotantes enmascarables (figuras, tablas, algoritmos, recuadros enmarcados)
+       que invaden parcialmente medianeras o rompen la continuidad Manhattan.
+    4. Aplica ordenamiento columnar estricto por bandas sobre la prosa remanente.
+    5. Reinserta determinísticamente los flotantes enmascarados inmediatamente después del primer
+       bloque de prosa que los referencia explícitamente (Fig. X, Table Y, Box Z, Algorithm K),
+       o en el punto de corte de banda más cercano a su centroide vertical cy.
+    6. Agrupa las biografías de autores ('author_bio') por columna al cierre del cuerpo.
     """
     active = [b for b in blocks if b.kind != "abandon"]
     if not active:
@@ -127,8 +130,64 @@ def order_page_blocks(
 
     gutters_all = [(g0, g1) for g0, g1, _, _ in column_zones] if column_zones else []
 
-    # Ordenar candidatos por y0 para detectar barreras de sincronización
-    body_sorted_y = sorted(body, key=lambda b: (round(b.bbox.y0, 1), round(b.bbox.x0, 1)))
+    # Enmascaramiento jerárquico XY-Cut++:
+    caption_map: Dict[str, Block] = {}
+    for b in body:
+        if b.kind in ("figure_caption", "table_caption"):
+            parent_id = b.metadata.get("parent_figure_id") or b.metadata.get("parent_table_id")
+            if parent_id:
+                caption_map[str(parent_id)] = b
+
+    full_width_threshold = page_width * 0.58
+    masked_groups: List[Tuple[Block, List[Block], Optional[str]]] = []
+    unmasked_body: List[Block] = []
+    handled_ids = set()
+
+    for b in body:
+        if b.id in handled_ids:
+            continue
+        is_framed_box = bool(b.metadata.get("is_framed_box", False))
+        is_float = b.kind in ("figure", "table", "algorithm") or is_framed_box
+
+        crosses_gutter = any(
+            b.bbox.x0 < (g0 - 4.0) and b.bbox.x1 > (g1 + 4.0)
+            for g0, g1 in gutters_all
+        )
+        is_spanning_barrier = (b.bbox.width >= full_width_threshold) or (b.kind == "title")
+
+        if is_float and not is_spanning_barrier and (crosses_gutter or is_framed_box or (b.bbox.width >= (page_width * 0.35) and gutters_all)):
+            ref_label: Optional[str] = None
+            assoc: List[Block] = [b]
+            handled_ids.add(b.id)
+
+            cap = caption_map.get(b.id)
+            if cap and cap.id not in handled_ids:
+                assoc.append(cap)
+                handled_ids.add(cap.id)
+
+            cap_text = cap.text if cap else (b.caption_text or b.text or "")
+            m_fig = re.search(r"\b(Fig(?:ure)?\.?\s*\d+[a-zA-Z]?)\b", cap_text, re.I)
+            m_tab = re.search(r"\b(Tab(?:le)?\.?\s*\d+[a-zA-Z]?)\b", cap_text, re.I)
+            m_alg = re.search(r"\b(Algorithm\s*\d+)\b", cap_text, re.I)
+            m_box = re.search(r"\b(Box\s*\d+)\b", cap_text, re.I)
+
+            if m_fig:
+                ref_label = m_fig.group(1)
+            elif m_tab:
+                ref_label = m_tab.group(1)
+            elif m_alg:
+                ref_label = m_alg.group(1)
+            elif m_box:
+                ref_label = m_box.group(1)
+
+            masked_groups.append((b, assoc, ref_label))
+        elif b.kind in ("figure_caption", "table_caption") and b.id in {blk.id for _, blist, _ in masked_groups for blk in blist}:
+            continue
+        else:
+            unmasked_body.append(b)
+
+    # Ordenar candidatos no enmascarados por y0 para detectar barreras de sincronización
+    body_sorted_y = sorted(unmasked_body, key=lambda b: (round(b.bbox.y0, 1), round(b.bbox.x0, 1)))
     full_width_threshold = page_width * 0.58
 
     ordered_body: List[Block] = []
@@ -151,6 +210,42 @@ def order_page_blocks(
     if current_band:
         ordered_body.extend(_order_band_blocks(current_band, page_width, column_zones))
 
+    # Reinsertar determinísticamente cada grupo flotante enmascarado
+    for main_b, assoc_blocks, ref_label in masked_groups:
+        inserted = False
+        if ref_label and ordered_body:
+            m_num = re.search(r"\d+", ref_label)
+            if m_num:
+                num_str = m_num.group(0)
+                if "fig" in ref_label.lower():
+                    pat = re.compile(rf"\b(?:Fig\.?|Figure)\s*{num_str}\b", re.I)
+                elif "tab" in ref_label.lower():
+                    pat = re.compile(rf"\b(?:Tab\.?|Table)\s*{num_str}\b", re.I)
+                elif "box" in ref_label.lower():
+                    pat = re.compile(rf"\bBox\s*{num_str}\b", re.I)
+                elif "alg" in ref_label.lower():
+                    pat = re.compile(rf"\bAlgorithm\s*{num_str}\b", re.I)
+                else:
+                    pat = re.compile(rf"\b{re.escape(ref_label)}\b", re.I)
+            else:
+                pat = re.compile(rf"\b{re.escape(ref_label)}\b", re.I)
+
+            for idx, ob in enumerate(ordered_body):
+                if ob.kind in ("text", "paragraph", "list") and ob.text and pat.search(ob.text):
+                    ordered_body[idx + 1:idx + 1] = assoc_blocks
+                    inserted = True
+                    break
+
+        if not inserted:
+            target_cy = (main_b.bbox.y0 + main_b.bbox.y1) * 0.5
+            best_idx = len(ordered_body)
+            for idx, ob in enumerate(ordered_body):
+                ob_cy = (ob.bbox.y0 + ob.bbox.y1) * 0.5
+                if ob_cy >= target_cy:
+                    best_idx = idx
+                    break
+            ordered_body[best_idx:best_idx] = assoc_blocks
+
     ordered_bios = _order_band_blocks(bios, page_width, column_zones) if bios else []
     ordered_footnotes = sorted(footnotes, key=lambda b: (round(b.bbox.y0, 1), round(b.bbox.x0, 1)))
 
@@ -160,51 +255,65 @@ def order_page_blocks(
 def stitch_cross_page_paragraphs(pages: List[PageIR]) -> List[str]:
     """
     Construye el orden de lectura global a través de todas las páginas del documento
-    y recompone párrafos partidos entre páginas cuando una figura o tabla flotante
-    se interpone al inicio de la página siguiente:
-    - Si el último bloque 'text' de la página k no finaliza con puntuación terminal y el primer
-      bloque 'text' de la página k+1 inicia con minúscula, adelanta la continuación del párrafo
-      antes de los flotantes ('figure'/'table') que encabezaban la página k+1.
+    y recompone párrafos partidos entre páginas con horizonte multi-salto (Δp ∈ {1, 2}):
+    - Si la página k termina con oración inconclusa y la página k+1 carece de bloques 'text'
+      porque está ocupada exclusivamente por figuras o tablas, busca la continuación en la página k+2.
     """
     global_order: List[str] = []
 
-    for p_idx, page in enumerate(pages):
+    # Actualizar reading_order inicial por página
+    for page in pages:
         ordered = page.ordered_blocks()
         page.reading_order = [b.id for b in ordered]
 
-        if p_idx > 0:
-            prev_ordered = pages[p_idx - 1].ordered_blocks()
-            prev_texts = [b for b in prev_ordered if b.kind == "text" and b.text.strip()]
-            curr_texts = [b for b in ordered if b.kind == "text" and b.text.strip()]
+    for p_idx in range(len(pages)):
+        page_k = pages[p_idx]
+        ordered_k = page_k.ordered_blocks()
+        prev_texts = [b for b in ordered_k if b.kind == "text" and b.text.strip()]
+        if not prev_texts:
+            continue
+        last_prev = prev_texts[-1]
+        prev_unfinished = not bool(_SENTENCE_END_RE.search(last_prev.text.strip()))
+        if not prev_unfinished:
+            continue
 
-            if prev_texts and curr_texts:
-                last_prev = prev_texts[-1]
-                first_curr = curr_texts[0]
-                prev_unfinished = not bool(_SENTENCE_END_RE.search(last_prev.text.strip()))
-                curr_continues = first_curr.text.strip()[0].islower()
+        # Probar horizonte multi-salto Δp ∈ {1, 2}
+        for delta_p in (1, 2):
+            next_idx = p_idx + delta_p
+            if next_idx >= len(pages):
+                break
 
-                if prev_unfinished and curr_continues:
-                    # Si hay figuras/tablas flotantes antes de first_curr en la página actual,
-                    # colocar first_curr primero para no partir la frase a la mitad
-                    idx_first_text = ordered.index(first_curr)
-                    leading_floats = [
-                        b for b in ordered[:idx_first_text]
-                        if b.kind in ("figure", "figure_caption", "table", "table_caption")
-                    ]
-                    if leading_floats and len(leading_floats) == idx_first_text:
-                        reordered = [first_curr] + leading_floats + ordered[idx_first_text + 1:]
-                        page.reading_order = [b.id for b in reordered]
-                        ordered = reordered
+            target_page = pages[next_idx]
+            target_ordered = target_page.ordered_blocks()
+            target_texts = [b for b in target_ordered if b.kind == "text" and b.text.strip()]
 
-                    # Fusionar semánticamente la oración partida en last_prev para preservar anáfora en RAG
-                    if last_prev.text.endswith("-"):
-                        last_prev.text = last_prev.text[:-1] + first_curr.text.lstrip()
-                    else:
-                        last_prev.text = last_prev.text.rstrip() + " " + first_curr.text.lstrip()
-                    first_curr.text = ""
-                    first_curr.kind = "abandon"
+            if not target_texts:
+                # La página intermedia carece de prosa; continuar a delta_p == 2
+                continue
 
-        for b in ordered:
+            first_curr = target_texts[0]
+            curr_continues = first_curr.text.strip()[0].islower()
+
+            if curr_continues:
+                idx_first_text = target_ordered.index(first_curr)
+                leading_floats = [
+                    b for b in target_ordered[:idx_first_text]
+                    if b.kind in ("figure", "figure_caption", "table", "table_caption")
+                ]
+                if leading_floats and len(leading_floats) == idx_first_text:
+                    reordered = [first_curr] + leading_floats + target_ordered[idx_first_text + 1:]
+                    target_page.reading_order = [b.id for b in reordered]
+
+                if last_prev.text.endswith("-"):
+                    last_prev.text = last_prev.text[:-1] + first_curr.text.lstrip()
+                else:
+                    last_prev.text = last_prev.text.rstrip() + " " + first_curr.text.lstrip()
+                first_curr.text = ""
+                first_curr.kind = "abandon"
+                break
+
+    for page in pages:
+        for b in page.ordered_blocks():
             if b.kind != "abandon":
                 global_order.append(b.id)
 
