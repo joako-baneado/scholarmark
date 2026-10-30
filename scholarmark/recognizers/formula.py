@@ -254,6 +254,7 @@ class FormulaRecognizer:
                     drawings = []
 
         fraction_bars: List[BoundingBox] = []
+        radical_bars: List[BoundingBox] = []
         for d in drawings:
             r = d.get("rect")
             if r is None:
@@ -262,21 +263,95 @@ class FormulaRecognizer:
             if not pad_box.intersects(db):
                 continue
             if db.height <= 2.8 and 6.0 <= db.width <= (pad_box.width * 0.92):
-                fraction_bars.append(db)
+                # Invariante de vinculum radical:
+                # 1. Glifo de raíz a la izquierda (√, \u221a, \sqrt, CMEX)
+                is_radical = False
+                rad_glyphs = [
+                    t for t in tokens
+                    if (t.text in ("\u221a", "√", "\\sqrt") or "cmex" in getattr(t, "font_name", "").lower())
+                    and (db.x0 - 22.0) <= t.cx <= (db.x0 + 5.0)
+                    and (db.y0 - 5.0) <= t.cy <= (db.y1 + db.height + 40.0)
+                ]
+                has_diag_hook = False
+                for other_d in drawings:
+                    if other_d is d:
+                        continue
+                    or_rect = other_d.get("rect")
+                    if or_rect is not None:
+                        if abs(or_rect.x1 - db.x0) <= 3.5 and abs(or_rect.y0 - db.y0) <= 5.0:
+                            has_diag_hook = True
+                            break
 
-        return tokens, fraction_bars
+                tokens_under = [t for t in tokens if (db.x0 - 2.0) <= t.cx <= (db.x1 + 3.0) and t.cy >= (db.y0 - 0.5)]
+                tokens_above_right = [t for t in tokens if t.cx >= (db.x0 + 3.5) and t.cy < (db.y0 - 0.5)]
+
+                if (rad_glyphs or has_diag_hook) and tokens_under and not tokens_above_right:
+                    is_radical = True
+
+                if is_radical:
+                    radical_bars.append(db)
+                else:
+                    fraction_bars.append(db)
+
+        return tokens, fraction_bars, radical_bars
 
     def _reconstruct_sequence(
         self,
         tokens: List[MathSpanToken],
-        bars: List[BoundingBox]
+        bars: List[BoundingBox],
+        radical_bars: Optional[List[BoundingBox]] = None,
     ) -> str:
         """
-        Reconstruye recursivamente una expresión matemática 2D (fracciones, límites,
-        subíndices y superíndices anidados) a partir de sus tokens espaciales y barras vectoriales.
+        Reconstruye recursivamente una expresión matemática 2D (raíces, fracciones, límites,
+        matrices, subíndices y superíndices anidados) a partir de sus tokens espaciales y barras vectoriales.
         """
         if not tokens:
             return ""
+
+        # 1. Procesamiento de radicales antes de fracciones
+        if radical_bars:
+            sorted_rads = sorted(radical_bars, key=lambda b: b.width, reverse=True)
+            for rbar in sorted_rads:
+                rad_syms = [
+                    t for t in tokens
+                    if (t.text in ("\u221a", "√", "\\sqrt") or "cmex" in getattr(t, "font_name", "").lower())
+                    and (rbar.x0 - 22.0) <= t.cx <= (rbar.x0 + 5.0)
+                ]
+                idx_toks = [
+                    t for t in tokens
+                    if (rbar.x0 - 22.0) <= t.cx < (rbar.x0 + 2.0)
+                    and t.cy <= rbar.y0
+                    and t not in rad_syms
+                ]
+                radicand_toks = [
+                    t for t in tokens
+                    if (rbar.x0 - 2.0) <= t.cx <= (rbar.x1 + 3.0)
+                    and t.cy >= (rbar.y0 - 0.5)
+                    and t not in rad_syms
+                ]
+
+                if radicand_toks:
+                    consumed = set(idx_toks) | set(radicand_toks) | set(rad_syms)
+                    remaining_rads = [b for b in radical_bars if b is not rbar]
+                    left_toks = [t for t in tokens if t not in consumed and t.cx < rbar.x0]
+                    right_toks = [t for t in tokens if t not in consumed and t.cx >= rbar.x1]
+
+                    left_bars = [b for b in bars if b.x1 <= rbar.x0]
+                    inner_bars = [b for b in bars if b.x0 >= (rbar.x0 - 2.0) and b.x1 <= (rbar.x1 + 2.0)]
+                    right_bars = [b for b in bars if b.x0 >= rbar.x1]
+
+                    radicand_str = self._reconstruct_sequence(radicand_toks, inner_bars, remaining_rads)
+                    idx_str = self._reconstruct_sequence(idx_toks, []) if idx_toks else ""
+                    if idx_str:
+                        rad_latex = rf"\sqrt[{idx_str}]{{{radicand_str}}}"
+                    else:
+                        rad_latex = rf"\sqrt{{{radicand_str}}}"
+
+                    left_str = self._reconstruct_sequence(left_toks, left_bars, [b for b in remaining_rads if b.x1 <= rbar.x0])
+                    right_str = self._reconstruct_sequence(right_toks, right_bars, [b for b in remaining_rads if b.x0 >= rbar.x1])
+
+                    parts = [p for p in (left_str, rad_latex, right_str) if p]
+                    return " ".join(parts)
 
         valid_bars: List[Tuple[BoundingBox, List[MathSpanToken], List[MathSpanToken]]] = []
         for bar in sorted(bars, key=lambda b: b.width, reverse=True):
@@ -391,43 +466,95 @@ class FormulaRecognizer:
     def _try_reconstruct_matrix(tokens: List[MathSpanToken]) -> Optional[str]:
         """
         Detecta si un conjunto de tokens forma una matriz bidimensional (>= 2 filas y >= 2 columnas)
-        y la serializa como \\begin{pmatrix} ... \\end{pmatrix}.
+        y la serializa como \\begin{pmatrix|bmatrix|vmatrix} ... \\end{...}.
+        Soporta '=' dentro de celdas cuando está envuelta por delimitadores (>=75% altura de cuadrícula).
         """
-        core = [t for t in tokens if t.text.strip() not in ("(", ")", "[", "]", "{", "}")]
-        if len(core) < 4 or any(t.text.strip() == "=" for t in core):
+        if not tokens:
             return None
+
+        delims = [t for t in tokens if t.text.strip() in ("(", ")", "[", "]", "|", "||", "{", "}")]
+        core = [t for t in tokens if t not in delims]
+        if len(core) < 4:
+            return None
+
+        grid_y0 = min(t.bbox.y0 for t in core)
+        grid_y1 = max(t.bbox.y1 for t in core)
+        grid_height = max(1.0, grid_y1 - grid_y0)
+
+        left_delims = [t for t in delims if t.cx <= min(t.cx for t in core)]
+        right_delims = [t for t in delims if t.cx >= max(t.cx for t in core)]
+
+        has_left = any(t.bbox.height >= (grid_height * 0.70) for t in left_delims)
+        has_right = any(t.bbox.height >= (grid_height * 0.70) for t in right_delims)
+        has_wrapper = has_left and has_right
+
+        if not has_wrapper and any(t.text.strip() == "=" for t in core):
+            return None
+
+        env = "pmatrix"
+        if has_wrapper:
+            left_text = "".join(t.text.strip() for t in left_delims)
+            if "[" in left_text:
+                env = "bmatrix"
+            elif "|" in left_text:
+                env = "vmatrix"
 
         core_sorted_y = sorted(core, key=lambda t: t.cy)
-        rows: List[List[MathSpanToken]] = []
+        raw_rows: List[List[MathSpanToken]] = []
         for t in core_sorted_y:
-            if not rows or abs(t.cy - rows[-1][0].cy) > max(6.0, t.font_size * 0.65):
-                rows.append([t])
+            if not raw_rows or abs(t.cy - raw_rows[-1][0].cy) > max(6.0, t.font_size * 0.65):
+                raw_rows.append([t])
             else:
-                rows[-1].append(t)
+                raw_rows[-1].append(t)
 
-        if len(rows) < 2:
+        if len(raw_rows) < 2:
             return None
 
-        col_counts = [len(r) for r in rows]
+        grouped_rows: List[List[str]] = []
+        col_xs_per_row: List[List[float]] = []
+
+        for r in raw_rows:
+            r.sort(key=lambda t: t.cx)
+            cells: List[str] = []
+            xs: List[float] = []
+            cur_cell_toks: List[MathSpanToken] = []
+
+            for t in r:
+                if not cur_cell_toks:
+                    cur_cell_toks.append(t)
+                else:
+                    gap = t.bbox.x0 - cur_cell_toks[-1].bbox.x1
+                    if gap <= 9.0:
+                        cur_cell_toks.append(t)
+                    else:
+                        cell_str = " ".join(_normalize_token_latex(ct.text) for ct in cur_cell_toks)
+                        cell_cx = (cur_cell_toks[0].bbox.x0 + cur_cell_toks[-1].bbox.x1) * 0.5
+                        cells.append(cell_str)
+                        xs.append(cell_cx)
+                        cur_cell_toks = [t]
+
+            if cur_cell_toks:
+                cell_str = " ".join(_normalize_token_latex(ct.text) for ct in cur_cell_toks)
+                cell_cx = (cur_cell_toks[0].bbox.x0 + cur_cell_toks[-1].bbox.x1) * 0.5
+                cells.append(cell_str)
+                xs.append(cell_cx)
+
+            grouped_rows.append(cells)
+            col_xs_per_row.append(xs)
+
+        col_counts = [len(r) for r in grouped_rows]
         if min(col_counts) < 2 or max(col_counts) != min(col_counts):
             return None
 
-        for r in rows:
-            r.sort(key=lambda t: t.cx)
-
         num_cols = col_counts[0]
         for c_idx in range(num_cols):
-            col_xs = [rows[r_idx][c_idx].cx for r_idx in range(len(rows))]
-            if (max(col_xs) - min(col_xs)) > 28.0:
+            col_xs = [col_xs_per_row[r_idx][c_idx] for r_idx in range(len(grouped_rows))]
+            if (max(col_xs) - min(col_xs)) > 35.0:
                 return None
 
-        row_strs = []
-        for r in rows:
-            cells = [_normalize_token_latex(t.text) for t in r]
-            row_strs.append(" & ".join(cells))
-
+        row_strs = [" & ".join(r) for r in grouped_rows]
         body = r" \\ ".join(row_strs)
-        return rf"\begin{{pmatrix}} {body} \end{{pmatrix}}"
+        return rf"\begin{{{env}}} {body} \end{{{env}}}"
 
     def _try_reconstruct_multiline_aligned(
         self,
@@ -561,6 +688,37 @@ class FormulaRecognizer:
             i = j
         return " ".join(out_parts)
 
+    def _run_unimernet_onnx_gate(self, page: fitz.Page, bbox: BoundingBox) -> Optional[str]:
+        """
+        Micro-compuerta ONNX perezosa para UniMERNet-Tiny en CPU cuando la sintaxis KaTeX
+        o los glifos PUA de la ruta vectorial nativa presentan degradación.
+        """
+        try:
+            from ..models.registry import load_onnx_session
+            session = load_onnx_session("unimernet_tiny")
+            if session is None:
+                return None
+
+            import numpy as np
+            import cv2
+            pix = page.get_pixmap(clip=bbox.to_fitz_rect(), dpi=150, colorspace=fitz.csGRAY)
+            if pix.width < 4 or pix.height < 4:
+                return None
+
+            arr = np.frombuffer(pix.samples, dtype=np.uint8).reshape((pix.height, pix.width))
+            target_h, target_w = 192, 672
+            resized = cv2.resize(arr, (target_w, target_h), interpolation=cv2.INTER_AREA)
+            img_input = (resized.astype(np.float32) / 255.0 - 0.5) / 0.5
+            img_input = img_input[np.newaxis, np.newaxis, :, :]
+
+            input_name = session.get_inputs()[0].name
+            outputs = session.run(None, {input_name: img_input})
+            if outputs and len(outputs) > 0 and isinstance(outputs[0], str):
+                return outputs[0]
+        except Exception:
+            return None
+        return None
+
     def recognize_region(
         self,
         page: fitz.Page,
@@ -580,7 +738,7 @@ class FormulaRecognizer:
             f"{page.number}:{round(bbox.x0,1)}:{round(bbox.y0,1)}:{round(bbox.x1,1)}:{round(bbox.y1,1)}:{fallback_text}".encode("utf-8")
         ).hexdigest()
 
-        tokens, bars = self._extract_tokens_and_bars(page, bbox, drawings=drawings, ctx=ctx)
+        tokens, bars, radical_bars = self._extract_tokens_and_bars(page, bbox, drawings=drawings, ctx=ctx)
         raw_concat = " ".join(t.text for t in tokens) + " " + (fallback_text or "")
         has_bad, bad_count = has_corrupted_glyphs(raw_concat)
         if has_bad:
@@ -614,8 +772,16 @@ class FormulaRecognizer:
                     drop_ids = {id(t) for t in tokens_sorted_x[-3:]}
                     tokens = [t for t in tokens if id(t) not in drop_ids]
 
-        latex_str = self._reconstruct_sequence(tokens, bars).strip()
+        latex_str = self._reconstruct_sequence(tokens, bars, radical_bars=radical_bars).strip()
         ok, conf = validate_katex_syntax(latex_str)
+
+        # Micro-compuerta UniMERNet-Tiny ONNX si KaTeX falla o hay glifos PUA corruptos
+        if not ok or has_bad:
+            onnx_latex = self._run_unimernet_onnx_gate(page, bbox)
+            if onnx_latex:
+                latex_str = onnx_latex
+                ok, conf = validate_katex_syntax(latex_str)
+
         if not ok and fallback_text:
             self.last_fallback_triggered = True
             latex_str = _normalize_token_latex(fallback_text)
