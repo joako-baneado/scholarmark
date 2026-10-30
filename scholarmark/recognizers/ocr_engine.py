@@ -4,20 +4,27 @@ Provides 100% offline, CPU-friendly optical character recognition using
 miniature ONNX models (RapidOCR / PP-OCRv4) under selective gating.
 """
 
+import os
+from collections import OrderedDict
 from typing import List, Tuple, Optional, Any
 import numpy as np
 import fitz
 from ..core.geometry import BoundingBox
+
+os.environ.setdefault("OMP_NUM_THREADS", "2")
 
 
 class LocalOCREngine:
     """
     Singleton perezoso para OCR local con RapidOCR en ONNX.
     Solo inicializa el modelo cuando una compuerta de visión lo requiere.
+    Incorpora cuantización de formas a múltiplos de 64px y caché acotada LRU (20).
     """
     _instance: Optional["LocalOCREngine"] = None
     _engine: Optional[Any] = None
     _initialized: bool = False
+    _shape_cache: "OrderedDict[Tuple[int, int], bool]" = OrderedDict()
+    max_cached_shapes: int = 20
 
     def __new__(cls) -> "LocalOCREngine":
         if cls._instance is None:
@@ -52,6 +59,8 @@ class LocalOCREngine:
         """
         Ejecuta OCR sobre un Pixmap recortado y proyecta las coordenadas de vuelta
         al sistema de referencia del documento PDF (en puntos tipográficos 72 DPI).
+        Aplica cuantización de dimensiones a múltiplos de 64 píxeles para acotar
+        el recompilado de grafos dinámicos en ONNX Runtime.
 
         Retorna lista de: (BoundingBox_pdf, texto, confianza).
         """
@@ -73,7 +82,26 @@ class LocalOCREngine:
             else:
                 img = arr
 
-            results, _ = engine(img)
+            orig_h, orig_w = img.shape[:2]
+            # Cuantización de formas a múltiplos de 64px para acotar recompilaciones de grafos
+            pad_h = ((orig_h + 63) // 64) * 64
+            pad_w = ((orig_w + 63) // 64) * 64
+            shape_key = (pad_h, pad_w)
+            if shape_key in self._shape_cache:
+                self._shape_cache.move_to_end(shape_key)
+            else:
+                if len(self._shape_cache) >= self.max_cached_shapes:
+                    self._shape_cache.popitem(last=False)
+                self._shape_cache[shape_key] = True
+
+            if pad_h != orig_h or pad_w != orig_w:
+                padded_img = np.full((pad_h, pad_w, img.shape[2]), 255, dtype=img.dtype)
+                padded_img[:orig_h, :orig_w] = img
+                img_for_engine = padded_img
+            else:
+                img_for_engine = img
+
+            results, _ = engine(img_for_engine)
             if not results:
                 return []
 
@@ -88,6 +116,11 @@ class LocalOCREngine:
                 py0 = min(pt[1] for pt in box_pts)
                 px1 = max(pt[0] for pt in box_pts)
                 py1 = max(pt[1] for pt in box_pts)
+
+                if px0 >= orig_w or py0 >= orig_h:
+                    continue
+                px1 = min(px1, float(orig_w))
+                py1 = min(py1, float(orig_h))
 
                 pdf_x0 = clip_bbox.x0 + px0 * scale
                 pdf_y0 = clip_bbox.y0 + py0 * scale
