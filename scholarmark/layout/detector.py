@@ -980,7 +980,13 @@ class LayoutDetector:
             img_input = resized.astype(np.float32) / 255.0
             img_input = np.transpose(img_input, (2, 0, 1))[np.newaxis, :, :, :]
             input_name = session.get_inputs()[0].name
-            _ = session.run(None, {input_name: img_input})
+            outputs = session.run(None, {input_name: img_input})
+            if outputs and len(outputs) > 0:
+                res = outputs[0]
+                if isinstance(res, str):
+                    return res
+                if isinstance(res, (list, tuple)) and res and isinstance(res[0], str):
+                    return res[0]
             return None
         except Exception:
             return None

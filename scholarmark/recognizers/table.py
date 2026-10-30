@@ -38,6 +38,7 @@ class TableRecognizer:
         self.enable_local_vision = enable_local_vision
         self.ocr_dpi = ocr_dpi
         self.last_fallback_triggered: bool = False
+        self.last_is_landscape: bool = False
 
     @staticmethod
     def _detect_band_segments(profile, threshold: float = 0.015, min_span: int = 6) -> List[Tuple[int, int]]:
@@ -260,8 +261,8 @@ class TableRecognizer:
         ]
         return "\n".join(html_lines), "\n".join([gfm_hdr, gfm_sep] + gfm_body), False
 
-    @staticmethod
     def _extract_word_clusters_by_row(
+        self,
         page: fitz.Page,
         bbox: BoundingBox,
         ctx: Optional[PageContext] = None,
@@ -277,6 +278,7 @@ class TableRecognizer:
             words = page.get_text("words", clip=clip)
 
         if not words:
+            self.last_is_landscape = False
             return []
 
         rotation = int(page.rotation) % 360
@@ -297,6 +299,8 @@ class TableRecognizer:
                                 v_spans += 1
             if t_spans > 0 and (v_spans / float(t_spans)) > 0.60:
                 is_landscape_transposed = True
+
+        self.last_is_landscape = is_landscape_transposed
 
         page_w = float(page.rect.width)
         items: List[Tuple[BoundingBox, str]] = []
@@ -688,12 +692,25 @@ class TableRecognizer:
         # Rescate de reglas horizontales dentro del área de la tabla para separar filas
         table_rules: List[BoundingBox] = []
         drawings = ctx.drawings if ctx is not None else []
+        page_w = float(page.rect.width)
         for d in drawings:
             r = d.get("rect")
-            if r is not None and r.height <= 3.0:
-                rb = BoundingBox.from_fitz_rect(r)
-                if bbox.intersects(rb):
-                    table_rules.append(rb)
+            if r is None:
+                continue
+            if self.last_is_landscape:
+                if r.width <= 3.0:
+                    rb_trans = BoundingBox(
+                        min(r.y0, r.y1),
+                        min(page_w - r.x1, page_w - r.x0),
+                        max(r.y0, r.y1),
+                        max(page_w - r.x1, page_w - r.x0),
+                    )
+                    table_rules.append(rb_trans)
+            else:
+                if r.height <= 3.0:
+                    rb = BoundingBox.from_fitz_rect(r)
+                    if bbox.intersects(rb):
+                        table_rules.append(rb)
 
         cell_rows = self._merge_multiline_continuation_rows(cell_rows, col_anchors, horizontal_rules=table_rules)
 
@@ -823,7 +840,13 @@ class TableRecognizer:
             img_input = np.transpose(img_input, (2, 0, 1))[np.newaxis, :, :, :]
 
             input_name = session.get_inputs()[0].name
-            _ = session.run(None, {input_name: img_input})
+            outputs = session.run(None, {input_name: img_input})
+            if outputs and len(outputs) > 0:
+                res = outputs[0]
+                if isinstance(res, str):
+                    return res, None, False
+                if isinstance(res, (list, tuple)) and res and isinstance(res[0], str):
+                    return "\n".join(res), None, False
             return None
         except Exception:
             return None

@@ -116,6 +116,7 @@ class MathSpanToken:
     text: str
     bbox: BoundingBox
     font_size: float
+    font_name: str = ""
 
     @property
     def cx(self) -> float:
@@ -202,6 +203,7 @@ class FormulaRecognizer:
             for ln in b.get("lines", []):
                 for sp in ln.get("spans", []):
                     sz = float(sp.get("size", 10.0))
+                    font_name = str(sp.get("font", ""))
                     chars = sp.get("chars", [])
                     if chars:
                         cur_chars = []
@@ -210,25 +212,25 @@ class FormulaRecognizer:
                             c_str = ch.get("c", "")
                             if not c_str or c_str.isspace():
                                 if cur_chars and cur_box:
-                                    tokens.append(MathSpanToken("".join(cur_chars), cur_box, sz))
+                                    tokens.append(MathSpanToken("".join(cur_chars), cur_box, sz, font_name=font_name))
                                     cur_chars = []
                                     cur_box = None
                                 continue
                             cb = BoundingBox(*[float(v) for v in ch["bbox"]])
                             if cur_chars and (c_str in "=+-(),[]" or cur_chars[-1] in "=+-(),[]"):
-                                tokens.append(MathSpanToken("".join(cur_chars), cur_box, sz))
+                                tokens.append(MathSpanToken("".join(cur_chars), cur_box, sz, font_name=font_name))
                                 cur_chars = [c_str]
                                 cur_box = cb
                             else:
                                 cur_chars.append(c_str)
                                 cur_box = cb if cur_box is None else cur_box.union(cb)
                         if cur_chars and cur_box:
-                            tokens.append(MathSpanToken("".join(cur_chars), cur_box, sz))
+                            tokens.append(MathSpanToken("".join(cur_chars), cur_box, sz, font_name=font_name))
                     else:
                         stxt = sp.get("text", "").strip()
                         if stxt:
                             sb = BoundingBox(*[float(v) for v in sp["bbox"]])
-                            tokens.append(MathSpanToken(stxt, sb, sz))
+                            tokens.append(MathSpanToken(stxt, sb, sz, font_name=font_name))
 
         deduped_tokens: List[MathSpanToken] = []
         for tk in tokens:
@@ -713,8 +715,18 @@ class FormulaRecognizer:
 
             input_name = session.get_inputs()[0].name
             outputs = session.run(None, {input_name: img_input})
-            if outputs and len(outputs) > 0 and isinstance(outputs[0], str):
-                return outputs[0]
+            if outputs and len(outputs) > 0:
+                res = outputs[0]
+                if isinstance(res, str):
+                    return res
+                if isinstance(res, (list, tuple)) and res and isinstance(res[0], str):
+                    return res[0]
+                if hasattr(res, "tolist"):
+                    val = res.tolist()
+                    if isinstance(val, str):
+                        return val
+                    if isinstance(val, list) and val and isinstance(val[0], str):
+                        return val[0]
         except Exception:
             return None
         return None
