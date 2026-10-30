@@ -82,11 +82,48 @@ def _reorder_bidi_text(text: str) -> str:
     reordered_lines = []
     for line in lines:
         tokens = line.split(" ")
-        rtl_count = sum(1 for c in line if _is_rtl_char(c))
-        if rtl_count > 0:
-            reordered_lines.append(" ".join(reversed(tokens)))
-        else:
+        rtl_chars = sum(1 for c in line if _is_rtl_char(c))
+        if rtl_chars == 0:
             reordered_lines.append(line)
+            continue
+
+        latin_chars = sum(1 for c in line if c.isascii() and c.isalpha())
+        is_predom_rtl = rtl_chars >= latin_chars
+
+        runs = []
+        current_run = []
+        current_is_rtl = None
+        for tok in tokens:
+            has_rtl_tok = any(_is_rtl_char(c) for c in tok)
+            if current_is_rtl is None:
+                current_is_rtl = has_rtl_tok
+                current_run.append(tok)
+            elif current_is_rtl == has_rtl_tok:
+                current_run.append(tok)
+            else:
+                runs.append((current_is_rtl, current_run))
+                current_is_rtl = has_rtl_tok
+                current_run = [tok]
+        if current_run:
+            runs.append((current_is_rtl, current_run))
+
+        if is_predom_rtl:
+            reordered_runs = []
+            for is_rtl, r_toks in reversed(runs):
+                if is_rtl:
+                    reordered_runs.extend(reversed(r_toks))
+                else:
+                    reordered_runs.extend(r_toks)
+            reordered_lines.append(" ".join(reordered_runs))
+        else:
+            reordered_runs = []
+            for is_rtl, r_toks in runs:
+                if is_rtl:
+                    reordered_runs.extend(reversed(r_toks))
+                else:
+                    reordered_runs.extend(r_toks)
+            reordered_lines.append(" ".join(reordered_runs))
+
     return prefix + "\n".join(reordered_lines)
 
 
@@ -284,6 +321,7 @@ def map_spans_to_blocks(
                     group_bbox = group_bbox.union(gl["bbox"])
 
                 assembled = _assemble_lines(group_lines)
+                assembled = [_reorder_bidi_text(l) for l in assembled]
                 sep = "\n" if reg.kind in ("algorithm", "list") else " "
                 suffix = f"_c{cid}" if cid >= 0 else "_cspan"
                 raw_text = sep.join(assembled).strip()
@@ -292,7 +330,7 @@ def map_spans_to_blocks(
                     kind=reg.kind,
                     bbox=group_bbox,
                     page=page_num,
-                    text=_reorder_bidi_text(raw_text),
+                    text=raw_text,
                     confidence=reg.confidence,
                     source="native",
                     heading_level=reg.heading_level,
@@ -306,6 +344,7 @@ def map_spans_to_blocks(
             round(item["bbox"].x0, 1),
         ))
         assembled_lines = _assemble_lines(matched_lines)
+        assembled_lines = [_reorder_bidi_text(l) for l in assembled_lines]
 
         if reg.kind in ("algorithm", "list"):
             block_text = "\n".join(assembled_lines).strip()
@@ -316,7 +355,7 @@ def map_spans_to_blocks(
             kind=reg.kind,
             bbox=reg.bbox,
             page=page_num,
-            text=_reorder_bidi_text(block_text),
+            text=block_text,
             confidence=reg.confidence,
             source="native",
             heading_level=reg.heading_level,

@@ -28,6 +28,8 @@ class PageContext:
     column_zones: List[Tuple[float, float, float, float]] = field(default_factory=list)
     high_density_zones: List[BoundingBox] = field(default_factory=list)
     ocr_injected: bool = False
+    is_scanned: bool = False
+    has_type3_fonts: bool = False
     full_text: str = ""
 
     @classmethod
@@ -181,7 +183,9 @@ class PageContext:
             (ib.width * ib.height) >= (width * height * 0.40)
             for _, ib in image_boxes
         )
-        needs_ocr_triage = has_corrupted_type3 or (len(words) < 15 and has_large_image)
+        is_scanned = (len(words) == 0 and len(image_boxes) > 0) or (len(words) < 15 and has_large_image)
+        has_type3_fonts = has_corrupted_type3
+        needs_ocr_triage = has_type3_fonts or is_scanned
 
         if needs_ocr_triage:
             try:
@@ -196,27 +200,40 @@ class PageContext:
                     if ocr_words:
                         ocr_injected = True
                         b_idx = len(raw_dict.get("blocks", []))
-                        synth_spans = []
+                        synth_lines = []
+                        if has_corrupted_type3:
+                            words = [w for w in words if "\ufffd" not in str(w[4])]
                         for box, txt, score in ocr_words:
-                            for tok in txt.split():
+                            toks = txt.split()
+                            if not toks:
+                                continue
+                            line_spans = []
+                            tot_chars = sum(len(t) for t in toks) + max(0, len(toks) - 1)
+                            cur_x = box.x0
+                            char_w = max(1.0, box.width) / float(max(1, tot_chars))
+                            for tok in toks:
                                 w_idx = len(words)
-                                words.append((box.x0, box.y0, box.x1, box.y1, tok, b_idx, 0, w_idx))
-                                synth_spans.append({
-                                    "bbox": (box.x0, box.y0, box.x1, box.y1),
+                                tw = len(tok) * char_w
+                                tb = BoundingBox(cur_x, box.y0, min(box.x1, cur_x + tw), box.y1)
+                                cur_x = min(box.x1, cur_x + tw + char_w)
+                                words.append((tb.x0, tb.y0, tb.x1, tb.y1, tok, b_idx, len(synth_lines), w_idx))
+                                line_spans.append({
+                                    "bbox": (tb.x0, tb.y0, tb.x1, tb.y1),
                                     "text": tok,
-                                    "size": 10.0,
+                                    "size": max(8.0, min(14.0, box.height)),
                                     "font": "OCR-Synthesized",
                                     "chars": [],
                                 })
-                        if synth_spans:
+                            synth_lines.append({
+                                "bbox": (box.x0, box.y0, box.x1, box.y1),
+                                "spans": line_spans,
+                                "dir": (1.0, 0.0),
+                            })
+                        if synth_lines:
                             raw_dict.setdefault("blocks", []).append({
                                 "type": 0,
                                 "bbox": (0.0, 0.0, width, height),
-                                "lines": [{
-                                    "bbox": (0.0, 0.0, width, height),
-                                    "spans": synth_spans,
-                                    "dir": (1.0, 0.0),
-                                }]
+                                "lines": synth_lines,
                             })
                             text_lines.append(" ".join(t for _, _, _, _, t, _, _, _ in words))
             except Exception:
@@ -235,6 +252,8 @@ class PageContext:
             image_boxes=image_boxes,
             high_density_zones=high_density_zones,
             ocr_injected=ocr_injected,
+            is_scanned=is_scanned,
+            has_type3_fonts=has_type3_fonts,
             full_text="\n".join(text_lines),
         )
 

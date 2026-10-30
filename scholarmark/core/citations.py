@@ -185,7 +185,7 @@ def expand_citation_markers(
                         _add(pid)
             else:
                 has_punct = prefix.endswith((".", ",", ";", ":", ")", "]"))
-                has_word = bool(re.search(r"[a-zA-Z]{2,}$", prefix))
+                has_word = bool(re.search(r"[a-zA-Z]{3,}$", prefix))
                 if has_punct or has_word:
                     for pid in parsed_ids:
                         if 1 <= int(pid) <= 500:
@@ -199,7 +199,12 @@ def expand_citation_markers(
         m_base = re.search(r"([a-zA-Z0-9\.,;:\)\]]+)$", prefix)
         if m_base:
             base_token = m_base.group(1)
-            if (len(base_token) == 1 and base_token.isalpha()) or base_token == "10":
+            if (
+                (len(base_token) <= 2 and base_token.isalpha())
+                or base_token == "10"
+                or bool(re.search(r"[=+\-*/]\s*[a-zA-Z0-9]+$", prefix))
+                or bool(re.search(r"\d+[a-zA-Z]+$", base_token))
+            ):
                 is_math_exponent = True
 
         if not is_math_exponent:
@@ -223,7 +228,7 @@ def expand_citation_markers(
                         _add(pid)
             else:
                 has_punct = prefix.endswith((".", ",", ";", ":", ")", "]"))
-                has_word = bool(re.search(r"[a-zA-Z]{2,}$", prefix))
+                has_word = bool(re.search(r"[a-zA-Z]{3,}$", prefix))
                 if (has_punct or has_word) and parsed_ids:
                     for pid in parsed_ids:
                         if 1 <= int(pid) <= 500:

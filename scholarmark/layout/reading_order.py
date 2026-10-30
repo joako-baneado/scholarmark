@@ -139,6 +139,26 @@ def order_page_blocks(
                 caption_map[str(parent_id)] = b
 
     full_width_threshold = page_width * 0.58
+
+    masked_parent_ids = {
+        b.id for b in body
+        if (b.kind in ("figure", "table", "algorithm") or bool(b.metadata.get("is_framed_box", False)))
+        and not ((b.bbox.width >= full_width_threshold) or (b.kind == "title"))
+        and (
+            any(b.bbox.x0 < (g0 - 4.0) and b.bbox.x1 > (g1 + 4.0) for g0, g1 in gutters_all)
+            or bool(b.metadata.get("is_framed_box", False))
+            or (b.bbox.width >= (page_width * 0.35) and gutters_all)
+        )
+    }
+    masked_caption_ids = {
+        b.id for b in body
+        if b.kind in ("figure_caption", "table_caption")
+        and (
+            str(b.metadata.get("parent_figure_id")) in masked_parent_ids
+            or str(b.metadata.get("parent_table_id")) in masked_parent_ids
+        )
+    }
+
     masked_groups: List[Tuple[Block, List[Block], Optional[str]]] = []
     unmasked_body: List[Block] = []
     handled_ids = set()
@@ -146,24 +166,23 @@ def order_page_blocks(
     for b in body:
         if b.id in handled_ids:
             continue
-        is_framed_box = bool(b.metadata.get("is_framed_box", False))
-        is_float = b.kind in ("figure", "table", "algorithm") or is_framed_box
 
-        crosses_gutter = any(
-            b.bbox.x0 < (g0 - 4.0) and b.bbox.x1 > (g1 + 4.0)
-            for g0, g1 in gutters_all
-        )
-        is_spanning_barrier = (b.bbox.width >= full_width_threshold) or (b.kind == "title")
+        if b.id in masked_caption_ids:
+            continue
 
-        if is_float and not is_spanning_barrier and (crosses_gutter or is_framed_box or (b.bbox.width >= (page_width * 0.35) and gutters_all)):
+        if b.id in masked_parent_ids:
             ref_label: Optional[str] = None
-            assoc: List[Block] = [b]
             handled_ids.add(b.id)
 
             cap = caption_map.get(b.id)
-            if cap and cap.id not in handled_ids:
-                assoc.append(cap)
+            if cap:
                 handled_ids.add(cap.id)
+                if cap.bbox.y0 < b.bbox.y0:
+                    assoc = [cap, b]
+                else:
+                    assoc = [b, cap]
+            else:
+                assoc = [b]
 
             cap_text = cap.text if cap else (b.caption_text or b.text or "")
             m_fig = re.search(r"\b(Fig(?:ure)?\.?\s*\d+[a-zA-Z]?)\b", cap_text, re.I)
@@ -181,8 +200,6 @@ def order_page_blocks(
                 ref_label = m_box.group(1)
 
             masked_groups.append((b, assoc, ref_label))
-        elif b.kind in ("figure_caption", "table_caption") and b.id in {blk.id for _, blist, _ in masked_groups for blk in blist}:
-            continue
         else:
             unmasked_body.append(b)
 
@@ -310,6 +327,8 @@ def stitch_cross_page_paragraphs(pages: List[PageIR]) -> List[str]:
                     last_prev.text = last_prev.text.rstrip() + " " + first_curr.text.lstrip()
                 first_curr.text = ""
                 first_curr.kind = "abandon"
+                break
+            else:
                 break
 
     for page in pages:

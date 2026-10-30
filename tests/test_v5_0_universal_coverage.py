@@ -112,12 +112,66 @@ def test_table_90deg_landscape_transposition():
     impresas verticalmente dentro de páginas verticales (rotation=0 con texto vertical).
     """
     doc = fitz.open()
-    page = doc.new_page(width=612, height=792)
+    page = doc.new_page(width=600, height=800)
 
-    t_bbox = BoundingBox(100, 100, 400, 500)
+    synth_rawdict = {
+        "blocks": [
+            {
+                "type": 0,
+                "bbox": (200, 100, 300, 400),
+                "lines": [
+                    {
+                        "bbox": (200, 100, 215, 200),
+                        "dir": (0.0, 1.0),
+                        "spans": [{"text": "HeaderA", "bbox": (200, 100, 215, 150), "size": 10.0, "font": "Times"}],
+                    },
+                    {
+                        "bbox": (200, 250, 215, 350),
+                        "dir": (0.0, 1.0),
+                        "spans": [{"text": "DataA", "bbox": (200, 250, 215, 300), "size": 10.0, "font": "Times"}],
+                    },
+                    {
+                        "bbox": (250, 100, 265, 200),
+                        "dir": (0.0, 1.0),
+                        "spans": [{"text": "HeaderB", "bbox": (250, 100, 265, 150), "size": 10.0, "font": "Times"}],
+                    },
+                    {
+                        "bbox": (250, 250, 265, 350),
+                        "dir": (0.0, 1.0),
+                        "spans": [{"text": "DataB", "bbox": (250, 250, 265, 300), "size": 10.0, "font": "Times"}],
+                    },
+                ],
+            }
+        ]
+    }
+    words = [
+        (200.0, 100.0, 215.0, 150.0, "HeaderA", 0, 0, 0),
+        (200.0, 250.0, 215.0, 300.0, "DataA", 0, 1, 0),
+        (250.0, 100.0, 265.0, 150.0, "HeaderB", 0, 2, 0),
+        (250.0, 250.0, 265.0, 300.0, "DataB", 0, 3, 0),
+    ]
+    ctx = PageContext(
+        page=page,
+        page_num=1,
+        width=600.0,
+        height=800.0,
+        rotation=0,
+        raw_dict=synth_rawdict,
+        bboxlog=[],
+        drawings=[],
+        words=words,
+    )
+
+    t_bbox = BoundingBox(190, 80, 280, 420)
     rec = TableRecognizer()
-    assert hasattr(rec, "_extract_word_clusters_by_row")
+    rows = rec._extract_word_clusters_by_row(page, t_bbox, ctx=ctx)
     doc.close()
+
+    assert rec.last_is_landscape is True
+    assert len(rows) == 2
+    cell_texts = [[c[1] for c in r] for r in rows]
+    assert any("HeaderA" in r for r in cell_texts)
+    assert any("HeaderB" in r for r in cell_texts)
 
 
 # ---------------------------------------------------------------------------
@@ -188,10 +242,17 @@ def test_superscript_citation_ranges_and_exponent_disambiguation():
     cites2 = expand_citation_markers(text2, known_references=refs)
     assert "12" in cites2 and "15" in cites2
 
-    # 2. Desambiguación: Exponentes matemáticos NO deben expandirse como citas
+    # 2. Desambiguación: Exponentes matemáticos NO deben expandirse como citas (con y sin known_references)
     math_text = "The energy scale is E = mc^{2} and the concentration is 10^{4} cells/mL."
     cites_math = expand_citation_markers(math_text, known_references=refs)
     assert "2" not in cites_math and "4" not in cites_math
+
+    unicode_math = "The energy is mc² and the probability is p < 10⁻⁴ with 2x² = 8."
+    cites_unicode = expand_citation_markers(unicode_math, known_references=refs)
+    assert len(cites_unicode) == 0
+
+    cites_unicode_norefs = expand_citation_markers(unicode_math, known_references=None)
+    assert len(cites_unicode_norefs) == 0
 
 
 # ---------------------------------------------------------------------------
@@ -202,11 +263,12 @@ def test_xycut_float_masking_and_multi_hop_cross_page_stitching():
     """
     Verifica que:
     1. Cajas flotantes o recuadros editoriales sean enmascarados durante XY-Cut
-       y reinsertados contiguos a su bloque de referencia textual.
+       y reinsertados contiguos a su bloque de referencia textual sin duplicar leyendas.
     2. La costura de párrafos entre páginas conecte de la página k a la k+2 (Δp <= 2)
-       cuando la página intermedia contiene únicamente figuras o tablas completas.
+       cuando la página intermedia contiene únicamente figuras o tablas completas,
+       y NO salte páginas que contengan prosa válida aunque no continúe.
     """
-    # 1. Multi-hop stitching
+    # 1. Multi-hop stitching a través de página con solo figura
     p1_block = Block(
         id="p1_b1",
         kind="text",
@@ -234,11 +296,20 @@ def test_xycut_float_masking_and_multi_hop_cross_page_stitching():
     page3 = PageIR(page_number=3, width=612, height=792, blocks=[p3_block], reading_order=["p3_b1"])
 
     global_order = stitch_cross_page_paragraphs([page1, page2, page3])
-
-    # p1_block y p3_block deben haberse cosido a través del salto de página de p2
     assert "multimodal uncertainty gating" in p1_block.text
     assert p1_block.text.startswith("The proposed model outperforms")
     assert p3_block.kind == "abandon"
+
+    # 1b. Barrera de prosa intermedia: si p2 tiene texto (p.ej. una nueva sección), NO debe saltarla
+    b_k = Block(id="bk", kind="text", bbox=BoundingBox(50, 700, 300, 750), page=1, text="We observed that the system")
+    b_mid = Block(id="bmid", kind="text", bbox=BoundingBox(50, 50, 300, 100), page=2, text="Section 2 describes methods.")
+    b_k2 = Block(id="bk2", kind="text", bbox=BoundingBox(50, 50, 300, 100), page=3, text="failed under heavy load.")
+    pg1 = PageIR(page_number=1, width=612, height=792, blocks=[b_k], reading_order=["bk"])
+    pg2 = PageIR(page_number=2, width=612, height=792, blocks=[b_mid], reading_order=["bmid"])
+    pg3 = PageIR(page_number=3, width=612, height=792, blocks=[b_k2], reading_order=["bk2"])
+    stitch_cross_page_paragraphs([pg1, pg2, pg3])
+    assert b_k.text == "We observed that the system"
+    assert b_k2.kind == "text"
 
     # 2. Float Masking: Bloque flotante referenciado por 'Figure 1' reinsertado tras su bloque de mención
     prose_ref = Block(
@@ -273,8 +344,17 @@ def test_xycut_float_masking_and_multi_hop_cross_page_stitching():
 
     sorted_blocks = order_page_blocks([float_fig, fig_caption, prose_ref, other_prose], page_width=612.0)
     sorted_ids = [b.id for b in sorted_blocks]
-    # prose_ref debe anteceder a float_fig y fig_caption
     assert sorted_ids.index("p1_prose") < sorted_ids.index("p1_fig1")
+
+    # 3. No duplicación de leyenda de tabla cuando la leyenda se sitúa ARRIBA de la tabla
+    col_zones = [(290.0, 310.0, 0.0, 800.0)]
+    cap_top = Block(id="tab_cap", page=1, kind="table_caption", bbox=BoundingBox(200, 100, 450, 120), text="Table 1. Experimental results.", metadata={"parent_table_id": "tab1"})
+    tab_body = Block(id="tab1", page=1, kind="table", bbox=BoundingBox(200, 125, 450, 250), text="cell data", metadata={})
+    ref_txt = Block(id="t_ref", page=1, kind="text", bbox=BoundingBox(50, 50, 250, 90), text="See Table 1 for details.", metadata={})
+    table_ordered = order_page_blocks([ref_txt, cap_top, tab_body], page_width=600.0, column_zones=col_zones)
+    tab_ids = [b.id for b in table_ordered]
+    assert tab_ids.count("tab_cap") == 1
+    assert tab_ids.count("tab1") == 1
 
 
 # ---------------------------------------------------------------------------
@@ -302,6 +382,26 @@ def test_ocr_engine_lru_shape_cache_bounded():
 
     # El tamaño de la caché nunca debe superar max_cached_shapes
     assert len(engine._shape_cache) <= 20
+
+    # Verificamos los atributos de triaje OCR en PageContext
+    doc = fitz.open()
+    page = doc.new_page(width=612, height=792)
+    ctx = PageContext(
+        page=page,
+        page_num=1,
+        width=612.0,
+        height=792.0,
+        rotation=0,
+        raw_dict={"blocks": []},
+        bboxlog=[],
+        drawings=[],
+        words=[],
+        is_scanned=True,
+        has_type3_fonts=False,
+    )
+    assert ctx.is_scanned is True
+    assert ctx.has_type3_fonts is False
+    doc.close()
 
 
 # ---------------------------------------------------------------------------
@@ -339,7 +439,8 @@ def test_nfkc_ligature_decomposition_and_cjk_kerning():
 def test_bidi_rtl_text_reordering_with_markdown_prefixes():
     """
     Verifica el reordenamiento de textos BiDi/RTL (árabe/hebreo) preservando
-    prefijos de títulos y listas en Markdown (# , - , 1. ).
+    prefijos de títulos y listas en Markdown (# , - , 1. ) y preservando el orden
+    vertical de renglones en párrafos multilínea.
     """
     # Texto árabe con encabezado Markdown
     arabic_header = "# مقدمة البحث العلمي"
@@ -350,6 +451,17 @@ def test_bidi_rtl_text_reordering_with_markdown_prefixes():
     arabic_item = "- النتائج التجريبية الدقيقة"
     reordered_item = _reorder_bidi_text(arabic_item)
     assert reordered_item.startswith("- ")
+
+    # Párrafo multilínea: la línea 1 debe permanecer antes de la línea 2
+    l1 = "\u0627\u0644\u0633\u0637\u0631 \u0627\u0644\u0623\u0648\u0644"  # Línea 1
+    l2 = "\u0627\u0644\u0633\u0637\u0631 \u0627\u0644\u062b\u0627\u0646\u064a"  # Línea 2
+    multi_line = f"{l1}\n{l2}"
+    reordered_multi = _reorder_bidi_text(multi_line)
+    lines_res = reordered_multi.split("\n")
+    assert len(lines_res) == 2
+    # El contenido de la línea 1 debe estar en el primer renglón
+    assert "\u0627\u0644\u0623\u0648\u0644" in lines_res[0]
+    assert "\u0627\u0644\u062b\u0627\u0646\u064a" in lines_res[1]
 
 
 def test_chemical_structure_detection_and_orphan_protection():
