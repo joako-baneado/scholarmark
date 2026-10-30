@@ -331,10 +331,10 @@ class FormulaRecognizer:
                 ]
 
                 if radicand_toks:
-                    consumed = set(idx_toks) | set(radicand_toks) | set(rad_syms)
+                    consumed_ids = {id(t) for t in idx_toks} | {id(t) for t in radicand_toks} | {id(t) for t in rad_syms}
                     remaining_rads = [b for b in radical_bars if b is not rbar]
-                    left_toks = [t for t in tokens if t not in consumed and t.cx < rbar.x0]
-                    right_toks = [t for t in tokens if t not in consumed and t.cx >= rbar.x1]
+                    left_toks = [t for t in tokens if id(t) not in consumed_ids and t.cx < rbar.x0]
+                    right_toks = [t for t in tokens if id(t) not in consumed_ids and t.cx >= rbar.x1]
 
                     left_bars = [b for b in bars if b.x1 <= rbar.x0]
                     inner_bars = [b for b in bars if b.x0 >= (rbar.x0 - 2.0) and b.x1 <= (rbar.x1 + 2.0)]

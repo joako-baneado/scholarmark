@@ -941,7 +941,7 @@ class LayoutDetector:
                 if 15.0 <= u_bbox.width <= (page_w * 0.85) and 15.0 <= u_bbox.height <= (page_h * 0.85):
                     padded_bbox = u_bbox.pad(6.0, page.rect)
                     meta: Dict[str, Any] = {"is_chemical_structure": True}
-                    if getattr(self.config, "enable_ocsr", False):
+                    if getattr(getattr(self, "config", None), "enable_ocsr", False):
                         smiles = self._run_ocsr_gate(page, padded_bbox)
                         if smiles:
                             meta["smiles"] = smiles

@@ -51,4 +51,5 @@ scratch/
 *.onnx
 bench/results/*.json
 bench/results/overlays/
-
+case*.png
+*.pdf-*.png

@@ -158,7 +158,11 @@ def expand_citation_markers(
         m_base = re.search(r"([a-zA-Z0-9\.,;:\)\]]+)$", prefix)
         if m_base:
             base_token = m_base.group(1)
-            if (len(base_token) == 1 and base_token.isalpha()) or base_token == "10":
+            if (
+                (len(base_token) <= 2 and base_token.isalpha())
+                or base_token == "10"
+                or bool(re.search(r"[=+\-*/]\s*[a-zA-Z0-9]+$", prefix))
+            ):
                 is_math_exponent = True
 
         if not is_math_exponent:
