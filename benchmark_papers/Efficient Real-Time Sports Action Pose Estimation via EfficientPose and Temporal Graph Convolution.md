@@ -200,7 +200,7 @@ $$
 1 p_{t , t + 1} = | p_{t} - p_{t + 1} | , \tag{10}
 $$
 
-where p_{t} and p_{t}_{+}_{1} denote the pose estimates at time steps t and t + 1, respectively. If the temporal error exceeds a predefined threshold ϵ, the system triggers an optimization process to update the joint positions, ensuring smoother transitions between frames. The temporal consistency check is especially important for real-time sports analysis, where it helps coaches and analysts to reliably track athletes’ movements without being disrupted by erroneous predictions.
+where p_{t} and p_{t}_{+}_{1} denote the pose estimates at time steps t and t + 1, respectively. If the temporal error exceeds a predefined threshold \epsilon, the system triggers an optimization process to update the joint positions, ensuring smoother transitions between frames. The temporal consistency check is especially important for real-time sports analysis, where it helps coaches and analysts to reliably track athletes’ movements without being disrupted by erroneous predictions.
 
 In addition to smoothing and consistency checks, joint trajectory optimization plays a vital role in the postprocessing phase. This process further refines the spatial positioning and temporal alignment of joints through global optimization techniques, such as nonlinear least squares and constrained optimization. The optimization objective is to minimize the following loss function:
 
@@ -228,17 +228,11 @@ The Sports-1M dataset is a large-scale action recognition dataset containing one
 
 Through the use of these diverse datasets, the model was trained and fine-tuned to improve its performance in real-time sports action pose estimation tasks, especially in dynamic and interactive environments.
 
-B. EVALUATING INDICATOR To comprehensively evaluate the performance of models in real-time action pose estimation for sports events, three key evaluation MAE (metrics—Mean Absolute Error) [45], TC (Temporal Consistency) [46], and (Multiple Object Tracking) [47] —are introduced. MAE is primarily used to measure the error between the predicted joint positions and the ground truth, reflecting the accuracy of single-frame pose estimation. The formula for MAE is:
+B. EVALUATING INDICATOR To comprehensively evaluate the performance of models in real-time action pose estimation for sports events, three key evaluation MAE (metrics—Mean Absolute Error) [45], TC (Temporal Consistency) [46], and (Multiple Object Tracking) [47] —are introduced. MAE is primarily used to measure the error between the predicted joint positions and the ground truth, reflecting the accuracy of single-frame pose
 
-N X
+![Figure p.7](assets/Efficient_Real-Time_Sports_Action_Pose_Estimation_via_EfficientP/fig_p7_1.png)
 
-MAE = 1
-
-|p_{i} -ˆp_{i}|, (12)
-
-N
-
-i=1
+(12)
 
 where p_{i} represents the ground truth position of the i-th joint,
 
@@ -274,16 +268,11 @@ MOTA = 1 -
 
 <table>
   <tr><th>-</th><th>t(FNt + P FPt t GTt + ID_Switcht) ,</th></tr>
-  <tr><td colspan="2">represents the number of false negatives</td></tr>
-  <tr><td colspan="2">number of false positives, IDSwitcht is the</td></tr>
-  <tr><td colspan="2">switches, and GTt is the total number of</td></tr>
+  <tr><td colspan="2">represents the number of false negatives number of false positives, IDSwitcht is the switches, and GTt is the total number of</td></tr>
   <tr><td colspan="2">time t. MOTA provides a comprehensive</td></tr>
-  <tr><td colspan="2">tracking performance, incorporating multiple</td></tr>
-  <tr><td colspan="2">in the tracking process. The third</td></tr>
+  <tr><td colspan="2">tracking performance, incorporating multiple in the tracking process. The third</td></tr>
   <tr><td colspan="2">(Multiple Object Tracking Precision),</td></tr>
-  <tr><td colspan="2">precision of tracking across all targets</td></tr>
-  <tr><td colspan="2">calculates the average distance between</td></tr>
-  <tr><td colspan="2">true positions of all targets in the sequence.</td></tr>
+  <tr><td colspan="2">precision of tracking across all targets calculates the average distance between true positions of all targets in the sequence.</td></tr>
   <tr><td colspan="2">MOTP is:</td></tr>
   <tr><td colspan="2">= PT t=1 PN i=1 distance(ˆyi(t), yi(t)) ,</td></tr>
   <tr><td colspan="2">PT</td></tr>
@@ -307,6 +296,8 @@ where ˆy_{i}(t) and y_{i}(t) represent the predicted and ground truth positions
 
 By combining MAE, TC, and MOT, we can provide a comprehensive evaluation of models’ performance in real-time pose estimation in sports events. MAE focuses on the accuracy of individual frame predictions, TC ensures stability over time, and MOT guarantees robust tracking of multiple targets. Together, these metrics allow for an in-depth assessment of model precision, consistency, and robustness in complex dynamic environments, which is crucial for real-time action pose estimation in sports.
 
+C. COMPARATIVE EXPERIMENT As demonstrated by the experimental results, the combination of EfficientPose + T-GCN outperforms all other models across all evaluation metrics, showcasing exceptional performance. As shown in Table 1, the model achieves the lowest MAE of 30.5 mm and the lowest TC of 16.2 mm. These results highlight the model’s superior accuracy in single-frame pose estimation and stability in multi-frame temporal tracking. This combination excels in both pose precision and tracking stability, making it particularly well-suited for real-time sports action pose estimation tasks, where high accuracy in individual frame predictions and consistent tracking over time are critical in dynamic, fastchanging sports environments.
+
 **TABLE 1. Performance comparison of different models in terms of Average MAE, Average TC, FPS, MOTA, and MOTP.**
 
 | Model | MAE(mm) | TC(mm) | FPS | MOTA(%) | MOTP(mm) |
@@ -316,10 +307,8 @@ By combining MAE, TC, and MOT, we can provide a comprehensive evaluation of mode
 | OpenPose(3D) | 55.2 | 34.0 | 20 | 55.3 | 49.1 |
 | AlphaPose(3D) | 45.6 | 29.0 | 35 | 61.7 | 47.2 |
 | DeepLabCut(3D)[43] | 50.8 | 32.3 | 18 | 53.4 | 51.3 |
-| ST-GCN [44] | 39.0 | 25.5 | 35 | 73.5 | 44.5 |
+| ST-GCN[44] | 39.0 | 25.5 | 35 | 73.5 | 44.5 |
 | EfficientPose+T-GCN(Ours) | 30.5 | 16.2 | 45 | 80.2 | 41.0 |
-
-C. COMPARATIVE EXPERIMENT As demonstrated by the experimental results, the combination of EfficientPose + T-GCN outperforms all other models across all evaluation metrics, showcasing exceptional performance. As shown in Table 1, the model achieves the lowest MAE of 30.5 mm and the lowest TC of 16.2 mm. These results highlight the model’s superior accuracy in single-frame pose estimation and stability in multi-frame temporal tracking. This combination excels in both pose precision and tracking stability, making it particularly well-suited for real-time sports action pose estimation tasks, where high accuracy in individual frame predictions and consistent tracking over time are critical in dynamic, fastchanging sports environments.
 
 Additionally, the model performs exceptionally well in
 
@@ -327,18 +316,20 @@ terms of MOTA and MOTP. By effectively reducing false positives, false negatives
 
 The performance improvements can be attributed to EfficientPose, a lightweight and efficient backbone for pose estimation, combined with T-GCN, which excels at capturing temporal dynamics between frames. As shown in Fig. 3 The combination of precise pose estimation and temporal consistency ensures that the model not only provides high-accuracy pose predictions for each frame but also maintains coherence and stability across time. This feature is particularly important for sports action analysis tasks that require real-time understanding of athlete movements, as it allows the model to provide smooth, stable pose estimations across multiple frames.
 
-The experimental results demonstrate that the combination of EfficientPose and T-GCN outperforms all other models in both pose estimation accuracy and multi-object tracking performance. The model’s outstanding performance in metrics such as MAE, TC, MOTA, and MOTP highlights its effectiveness for real-time sports applications, particularly in tasks that require both high precision and temporal consistency in tracking multiple athletes. These results emphasize the value of combining EfficientPose with T-GCN, providing a robust solution for real-time sports action pose estimation and tracking in dynamic and interactive environments.
-
 ![FIGURE 3. The figure presents a runtime performance comparison of various 3D pose estimation models, including HRNet (3D), PoseResNet (3D), OpenPose (3D), AlphaPose (3D), ST-GCN (3D), and SufficientPose + T-GCN (Ours). The x-axis represents the number of people in the input data, ranging from 2 to 10, while the y-axis indicates the runtime in milliseconds (ms). The results demonstrate that OpenPose consistently exhibits the highest runtime, while SufficientPose + T-GCN achieves the lowest runtime across all scenarios, underscoring its efficiency. The other models display runtime performance with varying linear growth trends as the number of people increases, with HRNet and PoseResNet showing relatively moderate increases.](assets/Efficient_Real-Time_Sports_Action_Pose_Estimation_via_EfficientP/fig_p8_1.png)
 
 *FIGURE 3. The figure presents a runtime performance comparison of various 3D pose estimation models, including HRNet (3D), PoseResNet (3D), OpenPose (3D), AlphaPose (3D), ST-GCN (3D), and SufficientPose + T-GCN (Ours). The x-axis represents the number of people in the input data, ranging from 2 to 10, while the y-axis indicates the runtime in milliseconds (ms). The results demonstrate that OpenPose consistently exhibits the highest runtime, while SufficientPose + T-GCN achieves the lowest runtime across all scenarios, underscoring its efficiency. The other models display runtime performance with varying linear growth trends as the number of people increases, with HRNet and PoseResNet showing relatively moderate increases.*
+
+The experimental results demonstrate that the combination of EfficientPose and T-GCN outperforms all other models in both pose estimation accuracy and multi-object tracking performance. The model’s outstanding performance in metrics such as MAE, TC, MOTA, and MOTP highlights its effectiveness for real-time sports applications, particularly in tasks that require both high precision and temporal consistency in tracking multiple athletes. These results emphasize the value of combining EfficientPose with T-GCN, providing a robust solution for real-time sports action pose estimation and tracking in dynamic and interactive environments.
+
+D. ABLATION STUDY To validate the effectiveness and robustness of Efficient- P-ose + T-GCN in real-time action pose estimation for sports events, we conducted a series of ablation experiments to systematically analyze its module composition, parameter configurations, and overall performance. In the experiment, we adopted the parameter settings shown in Table 2 and
 
 **TABLE 2. Performance comparison for different K, α, and λ values. K represents the number of temporal steps or graph layers, α is the learning rate used during training, and λ is the regularization parameter that controls model complexity.**
 
 | K |  | 入 | MAE | TC | MOTA | MOTP |
 | --- | --- | --- | --- | --- | --- | --- |
 |  |  |  | (mm) | (mm) | (%) | (mm) |
-| 8 | 10-I | 10-2 | 42.0 | 28.0 | 68.0 | 45.5 |
+| 8 | 10-1 | 10-2 | 42.0 | 28.0 | 68.0 | 45.5 |
 | 8 | 10-2 | 10-3 | 39.0 | 25.5 | 70.0 | 44.5 |
 | 8 | 10-3 | 10-4 | 36.5 | 23.0 | 72.8 | 43.0 |
 | 16 | 10-1 | 10-2 | 38.5 | 22.0 | 72.0 | 43.5 |
@@ -348,40 +339,21 @@ The experimental results demonstrate that the combination of EfficientPose and T
 | 32 | 10-2 | 10-3 | 32.0 | 18.0 | 78.5 | 41.5 |
 | 32 | 10-3 | 10-4 | 30.5 | 16.2 | 80.2 | 41.0 |
 
-D. ABLATION STUDY To validate the effectiveness and robustness of Efficient- P-ose + T-GCN in real-time action pose estimation for sports events, we conducted a series of ablation experiments to systematically analyze its module composition, parameter configurations, and overall performance. In the experiment, we adopted the parameter settings shown in Table 2 and
-
 **TABLE 3. Ablation study results showing the impact of removing key components (T-GCN and EfficientPose) on model performance. Metrics reported include Average MAE, Average TC, FPS, MOTA, and MOTP. The full model configuration achieves the best performance.**
 
-<table data-source="local-ocr">
-  <tr><th>Model Configuration</th><th>MAE(mm)</th><th colspan="2">TC(mm) FPS</th><th colspan="2">MOTA(%) MOTP(mm)</th></tr>
-  <tr><td>EfficientPose-T-GCN (Full)</td><td>30.5</td><td>16.2</td><td>45</td><td>80.2</td><td>41.0</td></tr>
-  <tr><td>WithoutT-GCN</td><td>37.0</td><td>22.5</td><td>45</td><td>74.8</td><td>43.5</td></tr>
-  <tr><td>WithoutEfficientPose(Baseline)</td><td>50.0</td><td>32.0</td><td>25</td><td>58.0</td><td>49.0</td></tr>
-</table>
+| ModelConfiguration | MAE(mm) | TC(mm) | FPS | MOTA(%) | MOTP(mm) |
+| --- | --- | --- | --- | --- | --- |
+| EfficientPose-T-GCN (Full) | 30.5 | 16.2 | 45 | 80.2 | 41.0 |
+| WithoutT-GCN | 37.0 | 22.5 | 45 | 74.8 | 43.5 |
+| WithoutEfficientPose(Baseline) | 50.0 | 32.0 | 25 | 58.0 | 49.0 |
 
 **TABLE 4. Performance comparison of T-GCN configurations under varying temporal window lengths T and layer depths (Transposed).**
 
-| 5. Performance comparison of EfficientPose with varying |
+| 5. Performance comparison of EfficientPose with varying and channel configurations. |
 | --- |
-| and channel configurations. |
 
-| will maintain this configuration in subsequent experiments. |
+| will maintain this configuration in subsequent experiments. First, we removed the T-GCN and EfficientPose separately to construct baseline models for comparison. As shown in Table 3, The results show that the full model achieves the best performance across all metrics, with a MAE of 30.5mm, TC of 16.2mm, and a MOTA score of 80.2%, while maintaining a real-time frame rate of 45 FPS. In contrast, removing T-GCN led to a decline in temporal modeling capability, resulting in an increase in TC to 22.5mm and a decrease in MOTA to 74.8%. Removing EfficientPose caused the MAE to rise significantly to 50.0mm and MOTA to drop to 58.0%, demonstrating that EfficientPose ensures precise single-frame pose estimation, while T-GCN effectively captures temporal dependencies. The synergy of these two components significantly improves the model’s overall performance. |
 | --- |
-| First, we removed the T-GCN and EfficientPose separately |
-| to construct baseline models for comparison. As shown |
-| in Table 3, The results show that the full model achieves the |
-| best performance across all metrics, with a MAE of 30.5mm, |
-| TC of 16.2mm, and a MOTA score of 80.2%, while |
-| maintaining a real-time frame rate of 45 FPS. In contrast, |
-| removing T-GCN led to a decline in temporal modeling |
-| capability, resulting in an increase in TC to 22.5mm and |
-| a decrease in MOTA to 74.8%. Removing EfficientPose |
-| caused the MAE to rise significantly to 50.0mm and |
-| MOTA to drop to 58.0%, demonstrating that EfficientPose |
-| ensures precise single-frame pose estimation, while T-GCN |
-| effectively captures temporal dependencies. The synergy of |
-| these two components significantly improves the model’s |
-| overall performance. |
 
 Further analysis of T-GCN’s temporal window length T and network depth Table 4 revealed that the model achieves optimal performance when T = 32 and the number of temporal convolution layers is set to 4. This indicates that a larger temporal window captures long-term temporal dependencies, while a deeper temporal convolution structure enhances temporal feature learning. For the EfficientPose module Table 5, we explored different network depths and channel configurations. Results showed that setting the network depth to 4 layers and the number of channels to 128 achieves the best trade-off between accuracy and efficiency, with the MAE reaching 30.5mm, MOTA improving to 80.2%, and the frame rate slightly reduced but still maintaining 45 FPS.
 

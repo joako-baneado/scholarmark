@@ -51,6 +51,10 @@ For this specific investigation, which focused on testing the performance of mar
 
 Twenty-four healthy adult volunteers (average age: 45.69±10.80 years, weight: 67.62±11.95 Kg, height: 1.69±0.08 m, gender: 8 males/16 females) were previously recruited from the clinical staff of the affiliated hospital. None of the participants reported a history of balance, postural, or motor impairments that could interfere with the experimental tasks. The REHOME study was approved by the Institutional Ethics Committee, and all participants provided written informed consent prior to their inclusion.
 
+![markerless models.](assets/A_Deep_Dive_Into_MediaPipe_Pose_for_Postural_Assessment_A_Compar/fig_p3_1.png)
+
+*markerless models.*
+
 The postural assessment protocol consisted of 40-second quiet standing trials, performed with eyes open and arms relaxed alongside the body. This task enabled the detection of postural abnormalities and body instability. Each participant completed four repetitions of the postural task, two with the marker-based solution and two with the REHOME markerless camera-based solution.
 
 To minimize the motion artifacts caused by loose clothing while respecting participant comfort, individuals wore form-fitting athletic clothes. This approach avoids the potential discomfort associated with wearing only the underwear [50], which is a common requirement for marker-based motion capture systems.
@@ -63,10 +67,6 @@ The OPTO system (VICON, Oxford Metrics Ltd., Oxford, United Kingdom; sampling ra
 
 [60]. Although a complete marker configuration was used, we considered only nine markers on the anterior surface for direct comparison with markerless data (Fig. 1). This subset included markers positioned on the head (frontal), shoulders (acromion), hips (anterior superior iliac spine), knees (lateral epicondyle), and ankles (lateral malleolus), which are particularly important in posture, gait, and balance clinical assessments [61]. For each trial, the OPTO system generated a text file containing 3D coordinates (X_{OPTO}, Y_{OPTO}, and
 
-![markerless models.](assets/A_Deep_Dive_Into_MediaPipe_Pose_for_Postural_Assessment_A_Compar/fig_p3_1.png)
-
-*markerless models.*
-
 The AK system, configured as described in [49], employed a proprietary body-tracking algorithm (Azure Kinect Body Tracking SDK v1.1.0) to estimate a 3D skeletal model with 33 joints in real time. The world coordinates (X_{WAK}, Y_{WAK}, and Z_{WAK}) are expressed in meters, where Z_{WAK} represents the absolute distance from the camera. The AK system outputs a JSON file containing the 3D coordinates for the 33joint skeletal model, the recorded video (MP4, 640  \times  360px, 30 fps, 40 s), and the intrinsic parameters of the camera for both the color and depth sensors. Two distinct models were used in the analysis of the AK system data. First, the 3D world coordinate model, which we denote as KIN_3D. Second, using the intrinsic parameters, we constructed a mixed 2.5D model that emulates that provided by MediaPipe (see Section B), denoted as KIN_2D. This model was achieved by transforming world coordinates into 2D image-plane coordinates (X_{IAK},YIAK), expressed in pixels, and combining them with the depth value (Z_{WAK}?). For a direct comparison with the OPTO system, we retained only nine joints corresponding approximately to the marker locations from both KIN_3D and KIN_2D models.
 
 B. MEDIAPIPE MARKERLESS MODELS In addition to the markerless skeletal models obtained directly from the AK system (KIN_3D and KIN_2D), we evaluated Google MediaPipe Pose (MP) to investigate its feasibility for postural assessment in clinical applications. A key advantage of MP is that it operates on RGB-only video input [39], thereby eliminating the hardware complexity associated with RGB-D sensors, while maintaining real-time performance through optimized neural network architectures.
@@ -77,23 +77,23 @@ Using this configuration, we generated MP models at all three network complexity
 
 Table 1 provides a comprehensive summary of all markerless models (AK and MP) evaluated in this study against the OPTO gold-standard reference. For brevity, we refer to the group of 2.5D models collectively as ‘2D models.’
 
-C. DATA PROCESSING The 3D trajectories of all body points (markers, joints, and landmarks) were processed and analyzed using custom scripts developed in MATLAB R2024a. To ensure that the analysis focused on maximal postural steadiness, we selected the central 25-second segment from each 40-second recording, discarding the initial 10 seconds and the final 5 seconds to minimize artifacts (e.g., incidental body movements) from task initiation and termination.
-
-All subsequent preprocessing was applied uniformly to this 25-second data window to create a common framework for
-
 **TABLE 1. List of investigated markerless models.**
 
 | Model |  |  |
 | --- | --- | --- |
 |  | Name | Description |
 | type |  |  |
-|  | KIN 3D | AK model (XwAk,YwAK, ZwAk) |
-| 3D | MP MP 03D 13D | MP model compl.0 (XwMp,YwMP,ZwMP) MP model compl. 1 (XwMp, YwMp, ZwMP) |
-|  | MP 23D | MPmodel compl.2 (XwMp,YwMp,ZwMP) |
-|  | KIN 2D | AK model (X1AK, Y1AK, ZwAK) |
+|  | KIN 3D | AKmodel(XwAK,YwAK,ZwAK) |
+| 3D | MP_1_3D MP03D | MP model compl.0 (XwMp,YwMp,ZwMP) MP model compl.1 (XwMp,YwMp,ZwMP) |
+|  | MP23D | MP model compl.2 (XwMp,YwMp,ZwMP) |
+|  | KIN 2D | AK model (X1Ak, Y1AK, ZwAK) |
 | 2.5D | MP 02D | MP model compl.0 (XIMp,YIMp,ZNMP) |
-|  | MP 一 2D | MP model compl.1 (X1Mp,Y1MP, ZNMP) |
-|  | MP 22D | MP model compl.2 (XIMp,Y1MP,ZNMP) |
+|  | MP 1 2D | MP model compl.1 (X1Mp,Y1Mp, ZNMP) |
+|  | MP22D | MP model compl.2 (XIMp,YIMP,ZNMP) |
+
+C. DATA PROCESSING The 3D trajectories of all body points (markers, joints, and landmarks) were processed and analyzed using custom scripts developed in MATLAB R2024a. To ensure that the analysis focused on maximal postural steadiness, we selected the central 25-second segment from each 40-second recording, discarding the initial 10 seconds and the final 5 seconds to minimize artifacts (e.g., incidental body movements) from task initiation and termination.
+
+All subsequent preprocessing was applied uniformly to this 25-second data window to create a common framework for
 
 direct comparison across all models. First, we established a common temporal base by resampling all signals (i.e., trajectories) to 50 Hz, which involved downsampling the OPTO marker trajectories from their original 100 Hz) and upsampling the AK joint and MP landmark trajectories from their original 30 fps. Second, we applied a two-stage filtering process to the resampled trajectories for noise reduction. The signal was initially passed through a 10-sample movingaverage filter to attenuate sporadic spikes, which were more prevalent in AK and MP data. Subsequently, we applied a fourth-order Butterworth low-pass filter with a 10 Hz cutoff frequency to suppress high-frequency noise while preserving the physiological components of the movement. These filtering operations were applied identically to all X, Y, and Z coordinates across every model to guarantee an unbiased comparison.
 
@@ -187,59 +187,14 @@ A. HORIZONTAL ANGLES The horizontal angles quantify the alignment of segments co
 
 Table 2 presents the accuracy and reliability metrics (MAE, SEM, and MDC95) of each markerless model. The mean and standard deviation (SD) are also reported for OPTO, as reference measures. Table 3 shows the results of the Bland–Altman agreement analysis, with systematic bias in the first rows and 95% limits of agreement (expressed as lower and upper bounds) in the second row.
 
-Fig. 3 displays radar plots of absolute bias, on a convenient scale to emphasize performance, derived from the Bland- Altman analysis, for an immediate visual comparison of systematic errors against OPTO across models (3D on the left, 2D on the right) and body segments.
-
-Among the three-dimensional models, KIN_3D demonstrated the best and most balanced performance, with a MAE consistently below 1.5◦ for all segments. The low values for SEM and MDC95 suggest that this model is reliable for detecting small, clinically meaningful postural changes in the horizontal segments on the frontal plane. The 3D MP models exhibited variable performance. MP_0_3D proved to be competitive for the shoulders, hips, and knees, with results
-
-**TABLE 2. Horizontal angles for OPTO and markerless models.**
-
-| Model | Parameter | Mean±SD (deg) |
-| --- | --- | --- |
-| OPTOa | H SHOULD | 1.65±1.08 |
-|  | H_HIP | 1.90±1.22 |
-|  | H KNEE | 1.76±1.38 |
-|  | H ANKLE | 0.92±0.64 |
-| KIN_3D | H SHOULD | 1.68±1.41 |
-|  | H_HIP | 0.99±0.81 |
-|  | H KNEE | 1.04±0.91 |
-|  | H ANKLE | 1.12±0.90 |
-| MP03D | H SHOULD | 1.46±0.92 |
-|  | H HIP | 0.82±0.57 |
-|  | H_KNEE | 2.13±1.56 |
-|  | H ANKLE | 6.00±4.59 |
-| MP_1_3D | HS SHOULD | 1.16±0.75 |
-|  | H HIP | 1.48±0.76 |
-|  | H_KNEE | 6.79±2.43 |
-|  | H ANKLE | 5.78±2.52 |
-| MP_2_3D | H SHOULD | 10.83±1.54 |
-|  | H HIP | 2.56±0.88 |
-|  | H KNEE | 24.38±3.03 |
-|  | H ANKLE | 7.97±3.78 |
-| KIN 2D | H SHOULD | 2.73±1.92 |
-|  | HHIP | 1.10±0.90 |
-|  | H KNEE | 1.02±0.84 |
-|  | H ANKLE | 2.06±1.06 |
-| MP02D | H SHOULD | 1.83±1.23 |
-|  | H HIP | 1.21±1.03 |
-|  | H KNEE | 1.42±0.91 |
-|  | H_ANKLE | 3.11±1.93 |
-| MP_1_2D | HS SHOULD | 1.82±1.53 |
-|  | H HIP | 1.43±1.00 |
-|  | H KNEE | 2.03±0.97 |
-|  | H ANKLE | 2.35±1.61 |
-| MP_2_2D | HS SHOULD | 1.59±1.14 |
-|  | H HIP | 0.99±0.74 |
-|  | H_KNEE | 1.77±1.18 |
-|  | H ANKLE | 2.42±1.82 |
-
 **TABLE 3. Bland-altman bias and LOA range.**
 
-| Model | H_SHOULD | H HIP | H KNEE | H ANKLE |
+| Model | H SHOULD | H HIP | H KNEE | H ANKLE |
 | --- | --- | --- | --- | --- |
 |  | (deg) | (deg) | (deg) | (deg) |
 | KIN_3D | 0.03 | -0.90 | -0.72 | 0.20 |
 |  | (-2.60,2.67) | (-2.99,1.19) | (-4.20,2.77) | (-2.05,2.46) |
-| MP_0_3D | -0.19 | -1.07 | 0.37 | 5.08 |
+| MP03D | -0.19 | -1.07 | 0.37 | 5.08 |
 |  | (-2.33,1.95) | (-3.85,1.70) | (-4.01,4.76) | (-4.13,14.29) |
 | MP_1_3D | -0.49 | -0.41 | 5.04 | 4.86 |
 |  | (-2.95,1.97) | (-3.31,2.48) | (-0.33,10.40) | (-0.33,10.05) |
@@ -249,22 +204,69 @@ Among the three-dimensional models, KIN_3D demonstrated the best and most balanc
 |  | (-1.96,4.12) | (-2.90,1.31) | (-4.06,2.58) | (-2.27,4.55) |
 | MP_0_2D | 0.18 | -0.68 | -0.34 | 2.19 |
 |  | (-2.38,2.74) | (-3.10,1.73) | (-3.99,3.31) | (-1.79,6.18) |
-| MP 12D | 0.17 | -0.47 | 0.27 | 1.43 |
+| MP 1 2D | 0.17 | -0.47 | 0.27 | 1.43 |
 |  | (-3.35,3.70) | (-3.26,2.33) | (-3.23,3.77) | (-2.22,5.08) |
 | MP_2_2D | -0.06 | -0.91 | 0.01 | 1.50 |
 |  | (-2.71,2.59) | (-3.97,2.16) | (-3.47,3.49) | (-2.21,5.21) |
 
+Fig. 3 displays radar plots of absolute bias, on a convenient scale to emphasize performance, derived from the Bland- Altman analysis, for an immediate visual comparison of systematic errors against OPTO across models (3D on the left, 2D on the right) and body segments.
+
+Among the three-dimensional models, KIN_3D demonstrated the best and most balanced performance, with a MAE consistently below 1.5◦ for all segments. The low values for SEM and MDC95 suggest that this model is reliable for detecting small, clinically meaningful postural changes in the horizontal segments on the frontal plane. The 3D MP models exhibited variable performance. MP_0_3D proved to be competitive for the shoulders, hips, and knees, with results
+
+**TABLE 2. Horizontal angles for OPTO and markerless models.**
+
+|  |  | Mean ± SD |
+| --- | --- | --- |
+| Model | Parameter |  |
+|  |  | (deg) |
+| OPTOa | H SHOULD | 1.65±1.08 |
+|  | H1 HIP | 1.90±1.22 |
+|  | H KNEE | 1.76±1.38 |
+|  | H ANKLE | 0.92±0.64 |
+| KIN_3D | H SHOULD | 1.68±1.41 |
+|  | H_HIP | 0.99±0.81 |
+|  | H KNEE | 1.04±0.91 |
+|  | H ANKLE | 1.12±0.90 |
+| MP03D | H SHOULD | 1.46±0.92 |
+|  | H_HIP | 0.82±0.57 |
+|  | H KNEE | 2.13±1.56 |
+|  | HANKLE | 6.00±4.59 |
+| MP_1_3D | H SHOULD | 1.16±0.75 |
+|  | H_HIP | 1.48±0.76 |
+|  | H_KNEE | 6.79±2.43 |
+|  | H ANKLE | 5.78±2.52 |
+| MP_2_3D | H SHOULD | 10.83±1.54 |
+|  | H_HIP | 2.56±0.88 |
+|  | H KNEE | 24.38±3.03 |
+|  | H_ANKLE | 7.97±3.78 |
+| KIN_2D | H SHOULD | 2.73±1.92 |
+|  | H HIP | 1.10±0.90 |
+|  | H_KNEE | 1.02±0.84 |
+|  | H ANKLE | 2.06±1.06 |
+| MP 02D | H SHOULD | 1.83±1.23 |
+|  | H HIP | 1.21±1.03 |
+|  | H KNEE | 1.42±0.91 |
+|  | H ANKLE | 3.11±1.93 |
+| MP 1 2D | H_SHOULD | 1.82±1.53 |
+|  | HIP | 1.43±1.00 |
+|  | H KNEE | 2.03±0.97 |
+|  | H ANKLE | 2.35±1.61 |
+| MP22D | H SHOULD | 1.59±1.14 |
+|  | H_HIP | 0.99±0.74 |
+|  | H_KNEE | 1.77±1.18 |
+|  | H ANKLE | 2.42±1.82 |
+
 comparable to those of KIN_3D. However, its accuracy decreased slightly at the ankle level (MAE > 5◦), indicating only moderate precision. MP_1_3D exhibited intermediate behavior, with performance comparable to MP_0_3D on proximal segments (shoulders and hips), but a notable decline for knees and ankles. Contrary to expectations, MP_2_3D consistently showed poor performance across all segments. With an MAE of 22.6◦ for the knee angle (H_KNEE) and substantial systematic bias (Table 3 ), this model proved unsuitable for precise quantitative assessment of horizontal angles for posture evaluation.
-
-![FIGURE 3. Radar plots of absolute biases derived from bland-altman analyses for 3D models (left) and 2D models (right) across different horizontal body segments.](assets/A_Deep_Dive_Into_MediaPipe_Pose_for_Postural_Assessment_A_Compar/fig_p7_3.png)
-
-*FIGURE 3. Radar plots of absolute biases derived from bland-altman analyses for 3D models (left) and 2D models (right) across different horizontal body segments.*
 
 Overall, the 2D models offer competitive accuracy. Their MAE values were comparable to those of the best 3D models,
 
 with only slight increases in the SEM and MDC95 metrics. This finding indicates that although their absolute precision may be slightly lower, they can provide reliable estimates of horizontal alignment.
 
 The radar plots in Fig. 3 visually confirm these findings: the KIN_3D profile is the smallest and most regular, whereas the MP_2_3D profile is the largest and most distorted, highlighting systematic and unbalanced errors. The radar profiles of the 2D models are clustered and relatively symmetrical, reinforcing their validity as robust and practical alternatives for horizontal alignment measurements.
+
+![FIGURE 3. Radar plots of absolute biases derived from bland-altman analyses for 3D models (left) and 2D models (right) across different horizontal body segments.](assets/A_Deep_Dive_Into_MediaPipe_Pose_for_Postural_Assessment_A_Compar/fig_p7_3.png)
+
+*FIGURE 3. Radar plots of absolute biases derived from bland-altman analyses for 3D models (left) and 2D models (right) across different horizontal body segments.*
 
 In summary, for the measurement of horizontal angles, KIN_3D remains the optimal choice for high-precision applications (errors < ±5◦), followed by MP_0_3D, with caution for the ankle segment. We hypothesized that the performance on this specific segment could be improved by optimizing camera framing to ensure higher visibility of ankle landmarks. When simplicity and rapid deployment are priorities, 2D models represent an excellent and reliable alternative. The MP_1_3D model can be used with caution, particularly for the measurement of the distal segments (knees and ankles). The MP_2_3D model is not recommended in its current version for measuring horizontal angles because of substantial systematic errors and poor accuracy.
 
@@ -280,11 +282,11 @@ Table 4 presents the accuracy and reliability metrics (MAE, SEM, and MDC95) of e
 
 Fig. 5 displays the bar plot of absolute bias, derived from the Bland-Altman analysis, for an immediate visual comparison of systematic errors against OPTO across models and body segments.
 
-For measuring the lateral tilt of the trunk (V_TRUNK) and lower limbs (V_ANKLE), all markerless models, both 2D and 3D, demonstrated excellent performance.
-
 ![FIGURE 5. Bar plot of absolute biases derived from bland-altman analyses for 3D and 2D models across the three vertical body segments.](assets/A_Deep_Dive_Into_MediaPipe_Pose_for_Postural_Assessment_A_Compar/fig_p7_2.png)
 
 *FIGURE 5. Bar plot of absolute biases derived from bland-altman analyses for 3D and 2D models across the three vertical body segments.*
+
+For measuring the lateral tilt of the trunk (V_TRUNK) and lower limbs (V_ANKLE), all markerless models, both 2D and 3D, demonstrated excellent performance.
 
 As shown in Table 4, the MAE values were almost continuously below 2◦, indicating a high accuracy. The
 
@@ -292,42 +294,40 @@ As shown in Table 4, the MAE values were almost continuously below 2◦, indicat
 
 |  |  | Mean ± SD |
 | --- | --- | --- |
-| Model | Parameter |  |
-|  |  | (bop) |
-| OPTOa | V_TRUNK | 1.23±0.80 |
-|  | V1 HEAD | 1.12±0.08 |
+| Model | Parameter | (deg) |
+| OPTOa | V TRUNK | 1.23±0.80 |
+|  | VHEAD | 1.12±0.08 |
 |  | V_ANKLE | 0.88±0.63 |
-| KIN_3D | V TRUNK | 1.08±0.73 |
+| KIN 3D | V TRUNK | 1.08±0.73 |
 |  | VHEAD | 1.67±0.98 |
 |  | VANKLE | 0.73±0.52 |
-| MP03D | V TRUNK | 0.91±0.75 |
-|  | V HEAD | 2.98±2.04 |
-|  | V_ANKLE | 0.94±0.61 |
+| MP_0_3D | V_TRUNK | 0.91±0.75 |
+|  | V_HEAD | 2.98±2.04 |
+|  | VANKLE | 0.94±0.61 |
 | MP_1_3D | V TRUNK | 1.26±0.86 |
-|  | V1 HEAD | 3.74±2.42 |
+|  | V_HEAD | 3.74±2.42 |
 |  | VANKLE | 1.84±0.75 |
 | MP_2_3D | V TRUNK | 1.48±0.88 |
 |  | V_HEAD | 9.16±3.12 |
-|  | VANKLE | 1.00±0.65 |
-| KIN 2D | V_TRUNK | 0.92±0.69 |
-|  | V HEAD | 3.35±2.51 |
+|  | V_ANKLE | 1.00±0.65 |
+| KIN 2D | V TRUNK | 0.92±0.69 |
+|  | V_HEAD | 3.35±2.51 |
 |  | VANKLE | 0.57±0.35 |
-| MP02D | V_TRUNK | 0.97±0.66 |
+| MP_0_2D | V_TRUNK | 0.97±0.66 |
 |  | VHEAD | 2.30±1.59 |
-|  | V_ANKLE | 0.59±0.47 |
-| MP_1_2D | VTRUNK | 0.79±0.54 |
+|  | VANKLE | 0.59±0.47 |
+| MP 1 2D | V TRUNK | 0.79±0.54 |
 |  | V_HEAD | 2.32±1.64 |
-|  | V_ANKLE | 0.72±0.51 |
-| MP22D | V TRUNK | 1.04±0.73 |
-|  | V HEAD | 2.41±1.43 |
+|  | VANKLE | 0.72±0.51 |
+| MP_2_2D | V_TRUNK | 1.04±0.73 |
+|  | V_HEAD | 2.41±1.43 |
 |  | V_ANKLE | 0.64±0.44 |
 
 | TABLE 5. Bland-altman bias and LOA range. |
 | --- |
 
-| Model | VTRUNK | VHEAD | VANKLE |
+| Model | V_TRUNK (deg) | V_HEAD (deg) | V_ANKLE (deg) |
 | --- | --- | --- | --- |
-|  | (deg) | (deg) | (deg) |
 | KIN_3D | -0.16 | 1.67 | -0.15 |
 |  | (-1.70,1.39) | (-0.25,3.58) | (-1.99,1.68) |
 | MP 03D | -0.33 | 2.98 | 0.06 |
@@ -338,7 +338,7 @@ As shown in Table 4, the MAE values were almost continuously below 2◦, indicat
 |  | (-2.54,3.04) | (2.86,15.45) | (-1.90,2.14) |
 | KIN_2D | -0.32 | 3.35 | -0.31 |
 |  | (-1.91,1.28) | (-1.56,8.27) | (-1.55,0.93) |
-| MP02D | -0.26 | 2.30 | -0.30 |
+| MP_0_2D | -0.26 | 2.30 | -0.30 |
 |  | (-1.84,1.32) | (-0.82,5.43) | (-2.12,1.53) |
 | MP_1_2D | -0.45 | 2.32 | -0.17 |
 |  | (-2.24,1.35) | (-0.89,5.53) | (-1.94,1.61) |
@@ -371,13 +371,32 @@ The analysis of sagittal angles is dominated by a key finding: the measurement e
 
 *FIGURE 6. Body segments to evaluate sagittal angles, with illustrative positions of reference points (light blue) and centroids (magenta) for shoulders, hips, knees, and ankles.*
 
-![FIGURE 7. Radar plots of absolute biases derived from bland-altman analyses for 3D models (left) and 2D models (right) across different sagittal body segments.](assets/A_Deep_Dive_Into_MediaPipe_Pose_for_Postural_Assessment_A_Compar/fig_p9_1.png)
-
-*FIGURE 7. Radar plots of absolute biases derived from bland-altman analyses for 3D models (left) and 2D models (right) across different sagittal body segments.*
-
 The 3D models exhibited distinct performances. KIN_3D
 
+| TABLE 7. Bland-altman bias and LOA range. |
+| --- |
+
 exhibited a consistent pattern of systematic offsets, with negative biases for the upper segments (trunk and head) and negative biases for lower segments (knee and ankle). This predictable pattern, supported by moderate and stable SEM and MDC95 values, suggests that the error stems from differences in the biomechanical model definition rather than from measurement instability.
+
+| Model | Z TRUNK | Z HEAD | ZANKLE | Z_KNEE |
+| --- | --- | --- | --- | --- |
+|  | (deg) | (deg) | (deg) | (deg) |
+| KIN_3D | -11.49 | -14.18 | 18.69 | 23.61 |
+|  | (-19.30,-3.68) | (-25.88,-2.48) | (8.10,29.29) | (14.29,32.93) |
+| MP_0_3D | 4.93 | 35.38 | 25.50 | 13.31 |
+|  | (-6.70,16.56) | (22.49,48.26) | (15.98,35.03) | (6.11,20.52) |
+| MP_1_3D | 2.01 | 31.75 | 25.12 | 16.24 |
+|  | (-6.94,10.97) | (26.32,37.18) | (15.68,34.56) | (9.22,23.27) |
+| MP_2_3D | 2.81 | 48.57 | 28.69 | 15.30 |
+|  | (-10.13,16.03) | (42.02,55.12) | (17.75,39.63) | (8.16,22.43) |
+| KIN 2D | -13.15 | -15.97 | 5.5 | 16.89 |
+|  | (-18.28, -8.02) | (-17.56, -14.37) | (-1.44,12.44) | (11.24,22.53) |
+| MP_0_2D | -13.05 | -15.62 | 5.59 | 16.85 |
+|  | (-18.17, -7.93) | (-17.18, -14.07) | (-1.35,12.53) | (11.21,22.49) |
+| MP_1_2D | -13.07 | -15.67 | 5.59 | 16.85 |
+|  | (-18.19, -7.94) | (-17.24, -14.10) | (-1.34,12.52) | (11.21,22.50) |
+| MP_2_2D | -13.05 | -15.66 | 5.58 | 16.87 |
+|  | (-18.18, -7.91) | (-17.20, -14.11) | (-1.35,12.51) | (11.23,22.51) |
 
 The 3D MediaPipe models (MP_0_3D, MP_1_3D, and MP_2_3D) showed significant positive biases, which were particularly pronounced for the head and ankle segments. These errors likely originate from the known challenge of accurately estimating the Z-component (depth) using an RGB source and learning-based 3D approaches.
 
@@ -385,70 +404,52 @@ The 2D models presented a remarkably uniform systematic error pattern across all
 
 **TABLE 6. Sagittal angles for OPTO and markerless models.**
 
-| Model | Parameter | Mean± SD | N |
-| --- | --- | --- | --- |
-|  |  | (deg) |  |
-| OPTOa | Z TRUNK | 103.15±2.61 |  |
-|  | Z HEAD | 105.97±0.81 |  |
-|  | Z ANKLE | 84.54±3.54 |  |
-|  | Z_KNEE | 73.13±2.88 |  |
-| KIN 3D | Z TRUNK | 91.66±1.96 |  |
-|  | Z HEAD | 91.79±5.72 |  |
-|  | Z_ANKLE | 103.23±2.30 |  |
-|  | Z_KNEE | 96.75±2.52 |  |
-| MP03D | Z TRUNK | 108.08±5.44 |  |
-|  | Z HEAD | 141.35±6.82 |  |
-|  | Z_ANKLE | 110.05±2.37 |  |
-|  | Z KNEE | 86.45±2.02 |  |
-| MP 13D | Z TRUNK | 105.16±3.67 |  |
-|  | Z HEAD | 137.72±2.67 |  |
-|  | Z_ANKLE | 109.66±3.04 |  |
-|  | Z_KNEE | 89.38±1.55 |  |
-| MP_2_3D | Z TRUNK | 105.96±6.17 |  |
-|  | Z HEAD | 154.55±3.71 |  |
-|  | Z_ANKLE | 113.23±3.87 |  |
-|  | Z KNEE | 88.43±1.72 |  |
-| KIN_2D | Z TRUNK | 90.00±0.01 |  |
-|  | Z_HEAD | 90.00±0.02 |  |
-|  | Z ANKLE | 90.04±0.01 |  |
-|  | Z KNEE | 90.02±0.01 |  |
-| MP02D | Z TRUNK | 90.10±0.04 |  |
-|  | Z HEAD | 90.35±0.10 |  |
-|  | Z ANKLE | 90.13±0.02 |  |
-|  | Z KNEE | 89.98±0.01 |  |
-| MP 1 2D | Z TRUNK | 90.08±0.02 |  |
-|  | Z_HEAD | 90.30±0.04 |  |
-|  | Z_ANKLE | 90.13±0.02 |  |
-|  | Z_KNEE | 89.99±0.01 |  |
-| MP_2_2D | Z_TRUNK | 90.11±0.04 |  |
-|  | Z HEAD | 90.32±0.05 |  |
-|  | Z_ANKLE | 90.12±0.03 |  |
-|  | Z_KNEE | 90.00±0.01 |  |
-
-| TABLE 7. Bland-altman bias and LOA range. |
-| --- |
-
-| Model | Z TRUNK | Z HEAD | ZANKLE | Z KNEE |
-| --- | --- | --- | --- | --- |
-|  | (deg) | (deg) | (deg) | (deg) |
-| KIN_3D | -11.49 | -14.18 | 18.69 | 23.61 |
-|  | (-19.30,-3.68) | (-25.88,-2.48) | (8.10,29.29) | (14.29,32.93) |
-| MP_0_3D | 4.93 | 35.38 | 25.50 | 13.31 |
-|  | (-6.70,16.56) | (22.49,48.26) | (15.98,35.03) | (6.11,20.52) |
-| MP_13D | 2.01 | 31.75 | 25.12 | 16.24 |
-|  | (-6.94,10.97) | (26.32,37.18) | (15.68,34.56) | (9.22,23.27) |
-| MP_2_3D | 2.81 | 48.57 | 28.69 | 15.30 |
-|  | (-10.13,16.03) | (42.02,55.12) | (17.75,39.63) | (8.16,22.43) |
-| KIN 2D | -13.15 | -15.97 | 5.5 | 16.89 |
-|  | (-18.28,-8.02) | (-17.56, -14.37) | (-1.44,12.44) | (11.24,22.53) |
-| MP_0_2D | -13.05 | -15.62 | 5.59 | 16.85 |
-|  | (-18.17, -7.93) | (-17.18, -14.07) | (-1.35,12.53) | (11.21,22.49) |
-| MP_1_2D | -13.07 | -15.67 | 5.59 | 16.85 |
-|  | (-18.19, -7.94) | (-17.24, -14.10) | (-1.34,12.52) | (11.21,22.50) |
-| MP_2_2D | -13.05 | -15.66 | 5.58 | 16.87 |
-|  | (-18.18,-7.91) | (-17.20, -14.11) | (-1.35,12.51) | (11.23,22.51) |
+|  | N | Mean ± SD |
+| --- | --- | --- |
+| Model | Parameter |  |
+|  | ( | (deg) |
+| OPTOa | Z TRUNK | 103.15±2.61 |
+|  | Z HEAD | 105.97±0.81 |
+|  | Z ANKLE | 84.54±3.54 |
+|  | Z_KNEE | 73.13±2.88 |
+| KIN_3D | Z_TRUNK | 91.66±1.96 |
+|  | Z_HEAD | 91.79±5.72 |
+|  | Z_ANKLE | 103.23±2.30 |
+|  | Z KNEE | 96.75±2.52 |
+| MP03D | Z_TRUNK | 108.08±5.44 |
+|  | Z HEAD | 141.35±6.82 |
+|  | ZANKLE | 110.05±2.37 |
+|  | Z_KNEE | 86.45±2.02 |
+| MP_1_3D | Z_TRUNK | 105.16±3.67 |
+|  | Z HEAD | 137.72±2.67 |
+|  | ZANKLE | 109.66±3.04 |
+|  | Z KNEE | 89.38±1.55 |
+| MP_2_3D | Z TRUNK | 105.96±6.17 |
+|  | Z HEAD | 154.55±3.71 |
+|  | Z_ANKLE | 113.23±3.87 |
+|  | Z KNEE | 88.43±1.72 |
+| KIN 2D | Z_TRUNK | 90.00±0.01 |
+|  | Z HEAD | 90.00±0.02 |
+|  | Z ANKLE | 90.04±0.01 |
+|  | Z KNEE | 90.02±0.01 |
+| MP02D | Z TRUNK | 90.10±0.04 |
+|  | Z HEAD | 90.35±0.10 |
+|  | Z ANKLE | 90.13±0.02 |
+|  | Z_KNEE | 89.98±0.01 |
+| MP_1_2D | Z_TRUNK | 90.08±0.02 |
+|  | Z_HEAD | 90.30±0.04 |
+|  | ZANKLE | 90.13±0.02 |
+|  | Z_KNEE | 89.99±0.01 |
+| MP_2_2D | Z TRUNK | 90.11±0.04 |
+|  | Z_HEAD | 90.32±0.05 |
+|  | Z_ANKLE | 90.12±0.03 |
+|  | Z KNEE | 90.00±0.01 |
 
 The radar plots in Fig. 7 visually confirm the magnitude and nature of these systematic errors in the sagittal angles. All the models generated extended profiles, reflecting substantial systematic biases. The 2D models exhibited highly uniform and circular patterns, whereas the 3D models exhibited more segment-specific variations.
+
+![FIGURE 7. Radar plots of absolute biases derived from bland-altman analyses for 3D models (left) and 2D models (right) across different sagittal body segments.](assets/A_Deep_Dive_Into_MediaPipe_Pose_for_Postural_Assessment_A_Compar/fig_p9_1.png)
+
+*FIGURE 7. Radar plots of absolute biases derived from bland-altman analyses for 3D models (left) and 2D models (right) across different sagittal body segments.*
 
 The highly systematic nature of these errors provides a straightforward method for offset correction and, consequently, a reliable clinical use. The consistent offset patterns suggest that a simple, per-parameter calibration (e.g., subtracting the constant bias) could effectively improve the absolute accuracy of all models, making them clinically useful for the quantitative assessment of sagittal angles. For applications where calibration is not feasible, these models remain valuable for tracking relative changes in sagittal angles over time (e.g., monitoring postural improvement across sessions), as systematic offsets can be considered constant.
 
@@ -478,69 +479,6 @@ Most models maintained good symmetry (SI > 0.89) across all joint angles. Notabl
 
 The most critical finding was the poor performance of MP_2_3D, which showed the most pronounced asymmetry, particularly in the hips (SI = 0.939). This value is substantially lower than the others ( \ge  0.990), confirming its unreliability for applications where bilateral comparison is important.
 
-**TABLE 8. Joint angles for OPTO and markerless models.**
-
-|  |  | Mean±SD |
-| --- | --- | --- |
-| Model | Parameter |  |
-|  |  | (deg) |
-| OPTOa | LSHOULD | 83.59±2.59 |
-|  | RSHOULD | 94.33±3.19 |
-|  | LHIP | 146.96±4.50 |
-|  | RHIP | 148.87±4.78 |
-|  | LKNEE | 164.56±4.40 |
-|  | RKNEE | 166.00±3.85 |
-| KIN_3D | LSHOULD | 80.58±1.99 |
-|  | RSHOULD | 99.68±1.89 |
-|  | LHIP | 166.59±2.54 |
-|  | RHIP | 168.49±3.39 |
-|  | LKNEE | 173.51±2.98 |
-|  | RKNEE | 173.31±3.62 |
-| MP03D | LSHOULD | 83.94±1.91 |
-|  | RSHOULD | 97.58±1.80 |
-|  | LHIP | 157.07±5.83 |
-|  | RHIP | 158.10±5.88 |
-|  | LKNEE | 156.26±1.85 |
-|  | RKNEE | 156.30±2.28 |
-| MP_1_3D | LSHOULD | 81.93±1.57 |
-|  | RSHOULD | 93.70±1.05 |
-|  | LHIP | 164.50±3.80 |
-|  | RHIP | 163.09±4.25 |
-|  | LKNEE | 160.45±2.53 |
-|  | RKNEE | 157.60±2.81 |
-| MP_2_3D | LSHOULD | 75.26±1.75 |
-|  | RSHOULD | 92.24±2.12 |
-|  | LHIP | 170.46±5.18 |
-|  | RHIP | 150.84±6.82 |
-|  | LKNEE | 156.09±2.67 |
-|  | RKNEE | 151.89±3.89 |
-| KIN 2D | LSHOULD | 82.12±2.09 |
-|  | RSHOULD | 101.33±2.03 |
-|  | LHIP | 168.34±1.96 |
-|  | RHIP | 170.04±3.02 |
-|  | LKNEE | 178.75±0.78 |
-|  | RKNEE | 178.51±0.89 |
-| MP_0_2D | LSHOULD | 80.79±1.80 |
-|  | RSHOULD | 98.94±1.83 |
-|  | LHIP | 170.98±1.97 |
-|  | RHIP | 172.00±2.67 |
-|  | LKNEE | 176.94±1.63 |
-|  | RKNEE | 177.32±1.99 |
-| MP 12D | LSHOULD | 82.04±1.76 |
-|  | RSHOULD | 98.75±2.00 |
-|  | LHIP | 173.61±2.17 |
-|  | RHIP | 172.85±3.59 |
-|  | LKNEE | 176.78±2.77 |
-|  | RKNEE | 176.72±2.18 |
-| MP_2_2D | LSHOULD | 81.50±1.39 |
-|  | RSHOULD | 97.94±1.42 |
-|  | LHIP | 171.04±2.25 |
-|  | RHIP | 173.15±3.01 |
-|  | LKNEE | 177.29±1.89 |
-|  | RKNEE | 177.90±1.43 |
-
-The scatter plots in Fig. 9, which visualize the average MAE (mean values of bilateral segments) against SI, confirm
-
 **TABLE 9. Simmetry index (SI) for OPTO and markerless models.**
 
 | Model | SHOULD | HIP | KNEE |
@@ -556,6 +494,70 @@ The scatter plots in Fig. 9, which visualize the average MAE (mean values of bil
 | MP_1_2D | 0.910±0.004 | 0.993±0.006 | 0.995±0.005 |
 | MP_2_2D | 0.908±0.006 | 0.991±0.006 | 0.996±0.004 |
 
+**TABLE 8. Joint angles for OPTO and markerless models.**
+
+<table data-source="local-ocr">
+  <tr><th colspan="2">Mean ± SD</th></tr>
+  <tr><td>Model</td><td>Parameter</td></tr>
+  <tr><td colspan="2">(deg)</td></tr>
+  <tr><td>OPTOa</td><td>LSHOULD</td><td>83.59±2.59</td></tr>
+  <tr><td colspan="2">RSHOULD</td><td>94.33±3.19</td></tr>
+  <tr><td colspan="2">LHIP</td><td>146.96±4.50</td></tr>
+  <tr><td colspan="2">RHIP</td><td>148.87±4.78</td></tr>
+  <tr><td colspan="2">LKNEE</td><td>164.56±4.40</td></tr>
+  <tr><td colspan="2">RKNEE</td><td>166.00±3.85</td></tr>
+  <tr><td>KIN_3D</td><td>LSHOULD</td><td>80.58±1.99</td></tr>
+  <tr><td colspan="2">RSHOULD</td><td>99.68±1.89</td></tr>
+  <tr><td colspan="2">LHIP</td><td>166.59±2.54</td></tr>
+  <tr><td colspan="2">RHIP</td><td>168.49±3.39</td></tr>
+  <tr><td colspan="2">LKNEE</td><td>173.51±2.98</td></tr>
+  <tr><td colspan="2">RKNEE</td><td>173.31±3.62</td></tr>
+  <tr><td>MP_0_3D</td><td>LSHOULD</td><td>83.94±1.91</td></tr>
+  <tr><td colspan="2">RSHOULD</td><td>97.58±1.80</td></tr>
+  <tr><td colspan="2">LHIP</td><td>157.07±5.83</td></tr>
+  <tr><td colspan="2">RHIP</td><td>158.10±5.88</td></tr>
+  <tr><td colspan="2">LKNEE</td><td>156.26±1.85</td></tr>
+  <tr><td colspan="2">RKNEE</td><td>156.30±2.28</td></tr>
+  <tr><td>MP13D</td><td>LSHOULD</td><td>81.93±1.57</td></tr>
+  <tr><td colspan="2">RSHOULD</td><td>93.70±1.05</td></tr>
+  <tr><td colspan="2">LHIP</td><td>164.50±3.80</td></tr>
+  <tr><td colspan="2">RHIP</td><td>163.09±4.25</td></tr>
+  <tr><td colspan="2">LKNEE</td><td>160.45±2.53</td></tr>
+  <tr><td colspan="2">RKNEE</td><td>157.60±2.81</td></tr>
+  <tr><td>MP_2_3D</td><td>LSHOULD</td><td>75.26±1.75</td></tr>
+  <tr><td colspan="2">RSHOULD</td><td>92.24±2.12</td></tr>
+  <tr><td colspan="2">LHIP</td><td>170.46±5.18</td></tr>
+  <tr><td colspan="2">RHIP</td><td>150.84±6.82</td></tr>
+  <tr><td colspan="2">LKNEE</td><td>156.09±2.67</td></tr>
+  <tr><td colspan="2">RKNEE</td><td>151.89±3.89</td></tr>
+  <tr><td>KIN_2D</td><td>LSHOULD</td><td>82.12±2.09</td></tr>
+  <tr><td colspan="2">RSHOULD</td><td>101.33±2.03</td></tr>
+  <tr><td colspan="2">LHIP</td><td>168.34±1.96</td></tr>
+  <tr><td colspan="2">RHIP</td><td>170.04±3.02</td></tr>
+  <tr><td colspan="2">LKNEE</td><td>178.75±0.78</td></tr>
+  <tr><td colspan="2">RKNEE</td><td>178.51±0.89</td></tr>
+  <tr><td>MP02D</td><td>LSHOULD</td><td>80.79±1.80</td></tr>
+  <tr><td colspan="2">RSHOULD</td><td>98.94±1.83</td></tr>
+  <tr><td colspan="2">LHIP</td><td>170.98±1.97</td></tr>
+  <tr><td colspan="2">RHIP</td><td>172.00±2.67</td></tr>
+  <tr><td colspan="2">LKNEE</td><td>176.94±1.63</td></tr>
+  <tr><td colspan="2">RKNEE</td><td>177.32±1.99</td></tr>
+  <tr><td>MP_1_2D</td><td>LSHOULD</td><td>82.04±1.76</td></tr>
+  <tr><td colspan="2">RSHOULD</td><td>98.75±2.00</td></tr>
+  <tr><td colspan="2">LHIP</td><td>173.61±2.17</td></tr>
+  <tr><td colspan="2">RHIP</td><td>172.85±3.59</td></tr>
+  <tr><td colspan="2">LKNEE</td><td>176.78±2.77</td></tr>
+  <tr><td colspan="2">RKNEE</td><td>176.72±2.18</td></tr>
+  <tr><td>MP_2_2D</td><td>LSHOULD</td><td>81.50±1.39</td></tr>
+  <tr><td colspan="2">RSHOULD</td><td>97.94±1.42</td></tr>
+  <tr><td colspan="2">LHIP</td><td>171.04±2.25</td></tr>
+  <tr><td colspan="2">RHIP</td><td>173.15±3.01</td></tr>
+  <tr><td colspan="2">LKNEE</td><td>177.29±1.89</td></tr>
+  <tr><td colspan="2">RKNEE</td><td>177.90±1.43</td></tr>
+</table>
+
+The scatter plots in Fig. 9, which visualize the average MAE (mean values of bilateral segments) against SI, confirm
+
 these findings. MP_2_3D was a clear outlier that often combine high errors with low symmetry.
 
 Based on these results, we provide the following recommendations for measuring joint angles. The KIN_3D and MP_0_3D models provide the best overall performance, combining reasonable accuracy with strong symmetry preservation. The MP_1_3D model slightly degrades in angle measurements, especially at the hips, while preserving acceptable symmetry. The high-complexity MP_2_3D model should be avoided for joint angle analysis, particularly when quantifying bilateral asymmetries. The 2D models are suitable for shoulder and hip analysis from a frontal view, but are inadequate for knee angle evaluation. For meaningful knee angle assessment, a lateral camera view would be preferable.
@@ -570,21 +572,8 @@ This analysis provided an essential context for a better understanding of the an
 
 *FIGURE 9. Scatter plots of average MAE (average of left and right values) and SI values for each joint angle (SHOULD, HIP, and KNEE) and models. KIN_3D and MP_2_3D models are explicitly indicated as the AK markerless reference and the worst among MP 3D models, respectively. The OPTO reference SI values are shown as magenta horizontal lines.*
 
-![the TRUNK, UPLEG, and LEG segments are shown for only one side of the body, although they were computed for both sides.](assets/A_Deep_Dive_Into_MediaPipe_Pose_for_Postural_Assessment_A_Compar/fig_p12_1.png)
-
-*the TRUNK, UPLEG, and LEG segments are shown for only one side of the body, although they were computed for both sides.*
-
-A primary finding from the analysis (Table 10) is that all 3D markerless models consistently underestimated segment
-
-**TABLE 10. Segment lengths for OPTO and 3D markerless models.**
-
-|  |  | Mean ± SD | Mean DIFF | Mean |
-| --- | --- | --- | --- | --- |
-| Segment | Model | (m) | (m) | DIFF (%) |
-
-|  |  |  | (70) |
-| --- | --- | --- | --- |
 | SHOULD | OPTO | 0.326±0.018 |  |
+| --- | --- | --- | --- |
 | KIN_3D | 0.314±0.015 | -0.013 | -3.60 |
 | MP_0_3D | 0.320±0.006 | -0.013 | -1.80 |
 | MP_1_3D | 0.326±0.015 | 0.016 | 0.20 |
@@ -625,6 +614,19 @@ A primary finding from the analysis (Table 10) is that all 3D markerless models 
 | MP_1_3D | 0.755±0.014 | -0.062 | -7.40 |
 | MP_2_3D | 0.767±0.011 | -0.070 | -8.30 |
 
+![the TRUNK, UPLEG, and LEG segments are shown for only one side of the body, although they were computed for both sides.](assets/A_Deep_Dive_Into_MediaPipe_Pose_for_Postural_Assessment_A_Compar/fig_p12_1.png)
+
+*the TRUNK, UPLEG, and LEG segments are shown for only one side of the body, although they were computed for both sides.*
+
+A primary finding from the analysis (Table 10) is that all 3D markerless models consistently underestimated segment
+
+**TABLE 10. Segment lengths for OPTO and 3D markerless models.**
+
+|  |  | Mean ± SD | MeanDIFF | Mean |
+| --- | --- | --- | --- | --- |
+| Segment | Model | (m) | (m) | DIFF (%) |
+|  | AnmA |  |  |  |
+
 lengths and widths compared to the OPTO reference, with mean absolute differences ranging from 1.3 cm to 9.0 cm. The magnitude of this underestimation varied by segment.
 
 Regarding shoulder width (SHOULD), all models provided a good approximation with minimal discrepancies
@@ -641,9 +643,13 @@ The analysis of bilateral segment SI (Fig. 11) revealed how well each model pres
 
 To determine whether the asymmetries in the 3D MediaPipe models originated from the 2D landmark tracking or the 3D reconstruction process, we analyzed the segment lengths in 2D image coordinates (Table 11) expressed in pixels and the symmetry index for bilateral segments (Fig. 12).
 
+![FIGURE 12. Mean symmetry index (SI) of segment lengths for 2D models.](assets/A_Deep_Dive_Into_MediaPipe_Pose_for_Postural_Assessment_A_Compar/fig_p13_1.png)
+
+*FIGURE 12. Mean symmetry index (SI) of segment lengths for 2D models.*
+
 **TABLE 11. Segment lengths for 2D markerless models.**
 
-|  | KIN 2D | MP_0_2D | MP_1_2D | MP_2_2D |
+|  | KIN 2D | MP02D | MP12D | MP22D |
 | --- | --- | --- | --- | --- |
 | Segment | Mean±SD | Mean±SD | Mean±SD | Mean±SD |
 |  | (xd) | (xd) | (xd) | (xd) |
@@ -663,10 +669,6 @@ The 2D analysis provided a critical insight: all 2D models, including all MediaP
 
 among the three MediaPipe models (Table 11), indicating that 2D tracking performance is not significantly affected by model complexity. Thus, we can conclude that using higher-complexity models, which come at the cost of processing speed, is likely unnecessary for achieving accurate 2D tracking.
 
-![FIGURE 12. Mean symmetry index (SI) of segment lengths for 2D models.](assets/A_Deep_Dive_Into_MediaPipe_Pose_for_Postural_Assessment_A_Compar/fig_p13_1.png)
-
-*FIGURE 12. Mean symmetry index (SI) of segment lengths for 2D models.*
-
 The systematic underestimation of segment lengths confirms that 3D markerless skeletal models are functional approximations of anatomical structures, and are not precise biomechanical replicas. This supports the main intent of these markerless models: their use as alternative and low-cost tracking options in unsupervised and remote clinical applications rather than as substitutes for gold-standard systems. Most importantly, the discovery that 3D asymmetries in high-complexity MediaPipe 3D models arise from 3D reconstructions has significant implications. This suggests that 2D tracking is robust, whereas the 3D reconstruction from a frontal view is critical.
 
 IV. LIMITS OF MEDIAPIPE 3D MODELS Our analysis revealed critical issues in 3D MediaPipe models, with progressive degradation in performance as model complexity increased. This trend negatively impacted both angular measurements and the preservation of bilateral symmetry.
@@ -677,11 +679,11 @@ To illustrate these criticisms visually, we rendered 3D skeletal reconstructions
 
 MP models. The frontal, lateral, and top views presented in Fig. 13 confirm the evident model degradation as complexity increases.
 
-The frontal view shows a progressive misalignment and asymmetry. The MP_2_3D model exhibited an evident horizontal misalignment of the shoulders and lateral tilt of the trunk, confirming the quantitative angular results. Furthermore, the anomalous position of the left knee landmark is a clear source of the observed linear and angular asymmetries.
-
 ![FIGURE 13. Frontal, lateral, and top views of 3D skeletal reconstructions for the three MP model complexities.](assets/A_Deep_Dive_Into_MediaPipe_Pose_for_Postural_Assessment_A_Compar/fig_p14_1.png)
 
 *FIGURE 13. Frontal, lateral, and top views of 3D skeletal reconstructions for the three MP model complexities.*
+
+The frontal view shows a progressive misalignment and asymmetry. The MP_2_3D model exhibited an evident horizontal misalignment of the shoulders and lateral tilt of the trunk, confirming the quantitative angular results. Furthermore, the anomalous position of the left knee landmark is a clear source of the observed linear and angular asymmetries.
 
 Although MP_0_3D and MP_1_3D appear similar in the lateral view, MP_2_3D shows anomalous positioning at the hip and a poor alignment of the bilateral segments. In addition, the head is positioned much farther forward, suggesting a significant error in the Z-component estimation.
 

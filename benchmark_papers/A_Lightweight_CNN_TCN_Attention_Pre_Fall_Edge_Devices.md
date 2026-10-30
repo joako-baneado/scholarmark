@@ -1,9 +1,9 @@
 ---
 title: Article A Lightweight CNN–TCN–Attention Framework
-source_pdf: ALIGHT~1.PDF
+source_pdf: A_Lightweight_CNN_TCN_Attention_Pre_Fall_Edge_Devices.pdf
 ---
 
-![Figure p.1](assets/MDPI_Edge_Devices_Fall_Recognition/fig_p1_1.png)
+![Figure p.1](assets/A_Lightweight_CNN_TCN_Attention_Pre_Fall_Edge_Devices/fig_p1_1.png)
 
 # Article A Lightweight CNN–TCN–Attention Framework
 
@@ -51,7 +51,7 @@ This study presents an implementation of a skeleton-based fall-state recognition
 
 The proposed system consists of four stages: data acquisition, skeleton preprocessing, feature extraction and state classification, and output generation. The overall pipeline was designed to operate on a resource-constrained edge device without relying on remote transmission of camera footage or cloud-based computation. Figure 1 illustrates the overall processing pipeline of the proposed system.
 
-![Figure 1. Overall architecture of the proposed lightweight fall-state recognition system.](assets/MDPI_Edge_Devices_Fall_Recognition/fig_p3_1.png)
+![Figure 1. Overall architecture of the proposed lightweight fall-state recognition system.](assets/A_Lightweight_CNN_TCN_Attention_Pre_Fall_Edge_Devices/fig_p3_1.png)
 
 *Figure 1. Overall architecture of the proposed lightweight fall-state recognition system.*
 
@@ -90,7 +90,7 @@ Electronics 2026, 15, 3748 5 of 20
 
 occluded, positioned at an unfavorable camera angle, or located outside the effective field of view.
 
-![Figure 2. Example of skeleton extraction using MediaPipe.](assets/MDPI_Edge_Devices_Fall_Recognition/fig_p5_1.png)
+![Figure 2. Example of skeleton extraction using MediaPipe.](assets/A_Lightweight_CNN_TCN_Attention_Pre_Fall_Edge_Devices/fig_p5_1.png)
 
 *Figure 2. Example of skeleton extraction using MediaPipe.*
 
@@ -140,7 +140,7 @@ Through pose estimation, each raw video frame is converted into an array of huma
 
 As illustrated in Figure 3, the proposed model combines a CNN, a TCN, and an attention module to learn the spatial and temporal characteristics of skeleton sequences.
 
-![Figure 3. Detailed architecture of the proposed lightweight CNN–TCN–Attention network.](assets/MDPI_Edge_Devices_Fall_Recognition/fig_p6_1.png)
+![Figure 3. Detailed architecture of the proposed lightweight CNN–TCN–Attention network.](assets/A_Lightweight_CNN_TCN_Attention_Pre_Fall_Edge_Devices/fig_p6_1.png)
 
 *Figure 3. Detailed architecture of the proposed lightweight CNN–TCN–Attention network.*
 
@@ -163,41 +163,27 @@ The fall-video data used in this study were obtained from the “Video–Sensor 
 Electronics 2026, 15, 3748 8 of 20
 
 <table>
-  <tr><th colspan="2">be interpreted as demonstrating cross-dataset generalization. Validation using independent</th></tr>
-  <tr><th colspan="2">fall datasets is required to assess robustness to broader variations in participants, camera</th></tr>
-  <tr><td colspan="2">viewpoints, and recording environments.</td></tr>
+  <tr><th colspan="2">be interpreted as demonstrating cross-dataset generalization. Validation using independent fall datasets is required to assess robustness to broader variations in participants, camera</th></tr>
+  <tr><th>viewpoints, and recording environments.</th></tr>
   <tr><td colspan="2">The following preprocessing procedure was performed to transform the videos into</td></tr>
-  <tr><td colspan="2">model inputs. First, each video was decomposed into individual frames, and three-</td></tr>
-  <tr><td colspan="2">dimensional skeletal coordinates (x, y, z) were extracted for 33 major body landmarks</td></tr>
-  <tr><td colspan="2">using MediaPipe [22]. Through this process, the raw videos were converted into NumPy</td></tr>
+  <tr><td colspan="2">model inputs. First, each video was decomposed into individual frames, and three- dimensional skeletal coordinates (x, y, z) were extracted for 33 major body landmarks using MediaPipe [22]. Through this process, the raw videos were converted into NumPy</td></tr>
   <tr><td>(.npy) data files.</td></tr>
   <tr><td colspan="2">To reduce variation caused by the subject’s position within the image, the extracted</td></tr>
-  <tr><td colspan="2">joint coordinates in each frame were normalized relative to the center of the pelvis. Fi-</td></tr>
-  <tr><td colspan="2">nally, all skeleton sequences were divided into fixed-length segments of 30 frames, corre-</td></tr>
-  <tr><td colspan="2">sponding to approximately 1 s of video, to construct the input dataset for model training</td></tr>
-  <tr><td>and inference.</td></tr>
-  <tr><td>3.2. Development Environment</td></tr>
+  <tr><td colspan="2">joint coordinates in each frame were normalized relative to the center of the pelvis. Fi- nally, all skeleton sequences were divided into fixed-length segments of 30 frames, corre- sponding to approximately 1 s of video, to construct the input dataset for model training</td></tr>
+  <tr><td>and inference. 3.2. Development Environment</td></tr>
   <tr><td colspan="2">Model development and deployment were performed in separate computing en-</td></tr>
-  <tr><td colspan="2">vironments. Because training directly on the edge device would impose an excessive</td></tr>
-  <tr><td colspan="2">computational and memory burden, model training was offloaded to a GPU-equipped</td></tr>
-  <tr><td colspan="2">workstation. The trained model was subsequently converted and deployed on the edge</td></tr>
-  <tr><td colspan="2">device for inference. The specifications of the workstation and edge-device environments</td></tr>
+  <tr><td colspan="2">vironments. Because training directly on the edge device would impose an excessive computational and memory burden, model training was offloaded to a GPU-equipped workstation. The trained model was subsequently converted and deployed on the edge device for inference. The specifications of the workstation and edge-device environments</td></tr>
   <tr><td>are presented in Table 1.</td></tr>
-  <tr><td colspan="2">Table 1. Edge Device and Workstation Specifications.</td></tr>
+  <tr><td>Table 1. Edge Device and Workstation Specifications.</td></tr>
   <tr><td>Environment</td><td>Category</td><td>Specification</td></tr>
-  <tr><td>CPU: I9-11900 K</td></tr>
-  <tr><td>Hardware</td><td>RAM: 64 GB</td></tr>
-  <tr><td>Training</td><td>GPU: Geforce RTX 3070 Ti</td></tr>
-  <tr><td>environment</td><td>OS: Windows 10</td></tr>
-  <tr><td>Framework: Python 3.9, PyTorch 2.1.0</td></tr>
-  <tr><td>Software</td></tr>
-  <tr><td>Libraries: MediaPipe 0.10.14, OpenCV 4.10.0, NumPy 1.26,</td></tr>
-  <tr><td>Scikit-learn 1.5.2</td></tr>
-  <tr><td>Edge Device: Raspberry Pi Zero 2 W</td></tr>
-  <tr><td>Edge</td><td>Hardware</td><td>CPU: Broadcom BCM2710A1</td></tr>
-  <tr><td>environment (inference)</td><td>RAM: 512 MB</td></tr>
-  <tr><td>Software</td><td>OS: Raspberry Pi OS (64 Bit)</td></tr>
 </table>
+
+| Environment | Category | Specification |
+| --- | --- | --- |
+| Training environment | Hardware | CPU: I9-11900 K RAM: 64 GB GPU: Geforce RTX 3070 Ti |
+| environment | Software | OS: Windows 10 Framework: Python 3.9, PyTorch 2.1.0 Libraries: MediaPipe 0.10.14, OpenCV 4.10.0, NumPy 1.26, Scikit-learn 1.5.2 |
+| Edge environment (inference) | Hardware | Edge Device: Raspberry Pi Zero 2 W CPU: Broadcom BCM2710A1 RAM: 512 MB |
+| environment (inference) | Software | OS: Raspberry Pi OS (64 Bit) |
 
 ### 3.3. Model Training and Optimization
 
@@ -255,24 +241,18 @@ Here, (B) and (T) denote the batch size and sequence length, respectively. Table
 
 **Table 3. Detailed Architecture of the Proposed Lightweight CNN–TCN–Attention Model.**
 
-|  |  | Output Shape |  |
+| Stage | Module | Output Shape (B = Batch Size, T = Sequence Length) | # Parameters |
 | --- | --- | --- | --- |
-| Stage | Module | (B = Batch Size, | # Parameters |
-|  |  | T = Sequence Length) |  |
 | Input | - | (B,T,1,33,4) | - |
 |  | Conv2d | (BxT,16,16,4) | 160 |
-| CNN | Conv2d | (BxT,32,8,4) | 4672 |
-|  | Conv2d | (BxT,64) | 18,496 |
+| CNN | Conv2d Conv2d | (BxT,16,16,4) (BxT,32,8,4) | 160 4672 |
+| CNN | Conv2d Conv2d | (BxT,32,8,4) (BxT,64) | 4672 18,496 |
 |  | Temporal Block 1 | (B,32,T) | 2.2 K |
-|  | Temporal Block 2 | (B,32,T) | 2.0 K |
-| TCN | Temporal Block 3 | (B,32,T) | 2.0 K |
-|  | Skip Connection | (B,32,T) | 3.0 K |
+| TCN | Temporal Block 1 Temporal Block 2 Temporal Block 3 | (B,32,T) (B,32,T) (B,32,T) | 2.2 K 2.0 K 2.0 K |
+|  | Temporal Block 3 Skip Connection | (B,32,T) (B,32,T) | 2.0 K 3.0 K |
 |  | Conv2d | (B,1,T,1) | 33 |
-| Attention | Softmax & Weighted | (B,32) | - |
-|  | sum |  |  |
-|  | LayerNorm + ReLU + |  |  |
-| Classifier |  | (B,3) | 99 |
-|  | Linear |  |  |
+| Attention | Conv2d Softmax & Weighted sum | (B,1,T,1) (B,32) | 33 - |
+| Classifier | LayerNorm + ReLU + Linear | (B,3) | 99 |
 | Total | - | - | 32 K |
 
 Electronics 2026, 15, 3748 11 of 20
@@ -326,23 +306,12 @@ An ablation study was conducted to evaluate the contribution of each component o
 
 Electronics 2026, 15, 3748 12 of 20
 
-<table>
-  <tr><th colspan="4">attention module from the complete model. Their classification performance was then</th></tr>
-  <tr><th colspan="2">compared with that of the proposed architecture.</th></tr>
-  <tr><td colspan="4">As shown in Table 4, the complete CNN–TCN–Attention model achieved the highest</td></tr>
-  <tr><td colspan="4">performance across all four metrics. The CNN–Attention model, in which the TCN was</td></tr>
-  <tr><td colspan="4">removed, achieved an accuracy of 92.81% and an F1-score of 91.31%. Its lower performance</td></tr>
-  <tr><td colspan="4">relative to the complete model indicates that explicitly modeling changes across consecutive</td></tr>
-  <tr><td colspan="3">frames contributes to the recognition of dynamic fall-related events.</td></tr>
-  <tr><td colspan="2">Table 4. Ablation Study Results.</td></tr>
-  <tr><td>Accuracy</td><td>Precision</td><td>Recall</td><td>F1-Score</td></tr>
-  <tr><td>CNN-TCN-</td></tr>
-  <tr><td>Attention</td><td>94.71%</td><td>93.75%</td><td>93.51%</td><td>93.63%</td></tr>
-  <tr><td>(our proposed)</td></tr>
-  <tr><td>CNN-Attention</td><td>92.81%</td><td>91.70%</td><td>90.93%</td><td>91.31%</td></tr>
-  <tr><td>TCN-Attention</td><td>88.60%</td><td>87.79%</td><td>85.10%</td><td>86.29%</td></tr>
-  <tr><td>CNN-TCN</td><td>86.32%</td><td>87.54%</td><td>78.20%</td><td>81.91%</td></tr>
-</table>
+|  | Accuracy | Precision | Recall | F1-Score |
+| --- | --- | --- | --- | --- |
+| CNN-TCN- Attention (our proposed) | 94.71% | 93.75% | 93.51% | 93.63% |
+| CNN-Attention | 92.81% | 91.70% | 90.93% | 91.31% |
+| TCN-Attention | 88.60% | 87.79% | 85.10% | 86.29% |
+| CNN-TCN | 86.32% | 87.54% | 78.20% | 81.91% |
 
 For the ablation study, the preprocessing procedure, optimizer, training strategy, and common hyperparameters were kept identical across all variants. Only the designated architectural component was removed in each experiment so that differences in performance could be attributed primarily to the architectural change rather than to independent hyperparameter retuning.
 
@@ -364,7 +333,7 @@ class classification performance and the average state-decision latency measured
 
 To improve CPU utilization, sequential execution on a single processing path was compared with a parallelized configuration using multiple CPU cores in Figure 4. In the parallel configuration, two CPU cores were allocated to MediaPipe-based pose estimation, while one core was allocated to classification inference. The use of task-level parallelism and CPU-core allocation reduced the average state-decision latency to approximately 325.88 ms/decision.
 
-![Figure 4. Comparison of average state-decision latency under sequential and parallel execution.](assets/MDPI_Edge_Devices_Fall_Recognition/fig_p13_1.png)
+![Figure 4. Comparison of average state-decision latency under sequential and parallel execution.](assets/A_Lightweight_CNN_TCN_Attention_Pre_Fall_Edge_Devices/fig_p13_1.png)
 
 *Figure 4. Comparison of average state-decision latency under sequential and parallel execution.*
 
@@ -378,23 +347,11 @@ As shown in Table 5, the proposed CNN–TCN–Attention model outperformed the l
 
 Electronics 2026, 15, 3748 14 of 20
 
-<table>
-  <tr><th colspan="5">points and recall by 4.83 percentage points, while reducing the average state-decision</th></tr>
-  <tr><th colspan="4">latency from 326.51 to 325.88 ms/decision.</th></tr>
-  <tr><td colspan="3">Table 5. Comparison with Baseline Models.</td></tr>
-  <tr><td>Average State-Decision Latency</td></tr>
-  <tr><td>Accuracy</td><td>Precision</td><td>Recall</td><td>F1-Score</td></tr>
-  <tr><td>(ms/Decision)</td></tr>
-  <tr><td>CNN-TCN-</td></tr>
-  <tr><td>Attention</td><td>94.71%</td><td>93.75%</td><td>93.51%</td><td>93.63%</td><td>325.88 ms</td></tr>
-  <tr><td>(our proposed)</td></tr>
-  <tr><td>CNN-LSTM-</td></tr>
-  <tr><td>91.88%</td><td>91.82%</td><td>88.68%</td><td>90.15%</td><td>326.51 ms</td></tr>
-  <tr><td>Attention</td></tr>
-  <tr><td>Mobilenet V3-</td></tr>
-  <tr><td>98.27%</td><td>97.89%</td><td>97.85%</td><td>97.86%</td><td>570.52 ms</td></tr>
-  <tr><td>TCN-Attention</td></tr>
-</table>
+|  | Accuracy | Precision | Recall | F1-Score | Average State-Decision Latency (ms/Decision) |
+| --- | --- | --- | --- | --- | --- |
+| CNN-TCN- Attention (our proposed) | 94.71% | 93.75% | 93.51% | 93.63% | 325.88 ms |
+| CNN-LSTM- Attention | 91.88% | 91.82% | 88.68% | 90.15% | 326.51 ms |
+| Mobilenet V3- TCN-Attention | 98.27% | 97.89% | 97.85% | 97.86% | 570.52 ms |
 
 For deployment efficiency, the CNN–LSTM–Attention model was configured with a hidden-state size of 16 and two LSTM layers. Although this lightweight configuration reduced the computational cost of the recurrent architecture, it also limited its representational capacity. The observed performance difference suggests that the proposed TCN-based architecture provided a more favorable balance between temporal-modeling capability and computational cost under the resource constraints of the Raspberry Pi Zero 2 W.
 
@@ -404,7 +361,7 @@ The proposed model achieved an average state-decision latency of 325.88 ms/decis
 
 Figure 5 presents the confusion matrices of the proposed model and the two comparison models. A particularly important error type for the intended alert system is the misclassification of an actual fall as normal because this error results in no alert being generated for a fall event.
 
-![Figure 5. Comparison of confusion matrices for three models. (a) CNN–TCN–Attention (Proposed) (b) CNN–LSTM–Attention (c) MobileNetV3–TCN–Attention.](assets/MDPI_Edge_Devices_Fall_Recognition/fig_p14_1.png)
+![Figure 5. Comparison of confusion matrices for three models. (a) CNN–TCN–Attention (Proposed) (b) CNN–LSTM–Attention (c) MobileNetV3–TCN–Attention.](assets/A_Lightweight_CNN_TCN_Attention_Pre_Fall_Edge_Devices/fig_p14_1.png)
 
 *Figure 5. Comparison of confusion matrices for three models. (a) CNN–TCN–Attention (Proposed) (b) CNN–LSTM–Attention (c) MobileNetV3–TCN–Attention.*
 

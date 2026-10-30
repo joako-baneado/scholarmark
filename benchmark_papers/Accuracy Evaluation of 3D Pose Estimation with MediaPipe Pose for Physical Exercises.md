@@ -38,7 +38,7 @@ Four healthy test subjects (all male) were recorded doing five different station
 
 S. Dill et al., Accuracy evaluation of MediaPipe Pose for physical exercise analysis
 
-![Figure p.2](assets/De_Gruyter_Accuracy_Evaluation_3D_Pose/fig_p2_2.png)
+![Figure p.2](assets/Accuracy_Evaluation_of_3D_Pose_Estimation_with_MediaPipe_Pose_fo/fig_p2_2.png)
 
 | Subject | Shoulder Height | Shoulder Width | Hip Width |
 | --- | --- | --- | --- |
@@ -55,7 +55,7 @@ interrupted by a short period of walking where they left the view of the cameras
 
 The videos were recorded with two identical low-cost securitytype cameras2 with a resolution of 2560  \times  1920 pixels and a frame rate of 30 frames per second. The MoCap suit captured data with 60 Hz, which was downsampled to match the 30 Hz of the cameras. MediaPipe Pose was run on every video recording to receive a pose estimation with every parameter influencing accuracy set to the highest possible value3. MediaPipe’s output consists of real-world x-y-z-coordinates of 33 different pose landmarks (in meters), where the x-y-plane is parallel to the image plane and the z-axis is oriented perpendicularly away from the camera. The coordinate systems
 
-![the hip joints (23 and 24). MediaPipe’s visibility estimate is colorcoded from blue (1) to green (0).](assets/De_Gruyter_Accuracy_Evaluation_3D_Pose/fig_p2_1.png)
+![the hip joints (23 and 24). MediaPipe’s visibility estimate is colorcoded from blue (1) to green (0).](assets/Accuracy_Evaluation_of_3D_Pose_Estimation_with_MediaPipe_Pose_fo/fig_p2_1.png)
 
 *the hip joints (23 and 24). MediaPipe’s visibility estimate is colorcoded from blue (1) to green (0).*
 
@@ -77,6 +77,14 @@ nate values. Instead, the results are focused on metrics that are independent of
 
 The results for the body dimension comparisons are presented first. Fig. 3 shows the box plot of the estimated shoulder widths for subject 4 as an example. From this boxplot several conclusions can be drawn. First, it is very obvious that the shoulder width is both biased and not constant. While the bias is easily explained by the fact that MediaPipe has no information about the subject’s size, the high interquartile range in the estimates show that the underlying model is not consistent over time, indicating a more profound limitation of the model. Secondly, a high dependency on the viewing angle of the cameras can be noted. When relating the interquartile range to the median, the lowest value is achieved for (S1, C2), where the viewing angle is 0∘ and highest for (S2, C1) and (S2, C2), where the viewing angles are 45∘.
 
+![Fig. 3: Boxplot showing the shoulder width of subject 4, estimated for each set (S1/S2) and from both cameras (C1/C2).](assets/Accuracy_Evaluation_of_3D_Pose_Estimation_with_MediaPipe_Pose_fo/fig_p3_1.png)
+
+*Fig. 3: Boxplot showing the shoulder width of subject 4, estimated for each set (S1/S2) and from both cameras (C1/C2).*
+
+To combat the bias, the estimated widths were normalized by the estimated shoulder heights. Similarly, the measured
+
+widths were also normalized. Then, the root-mean-squareerror (RMSE) was calculated over all frames in which a person was detected. The results are given in Tab. 2. The maximum RMSE of the shoulder width is calculated for subject 4, (S2, C1), being 29.78% off of the true value. The maximum RMSE of the hip width is calculated for subject 3, (S2, C1), being 34.37% off of the mean true value. This also highlights the dependency on the viewing angle, where the 45∘ angle chosen by subject four for the second set, seems to be particularly bad for the estimation. For the first sets, where the camera viewing angles do not change between subjects, the RMSE for the shoulder widths is always less for C2 than C1. This can be expected, as for C1, the shoulder joints lie directly behind one another, with the first occluding the second, impeding the estimation. Interestingly, this does not hold true for the hip width, which most of the times behaves exactly opposite to the shoulder width when comparing C1 and C2.
+
 **Tab. 2: RMSE of the relative shoulder width (SW) and hip width (HW), as estimated from camera one (C1) and camera 2 (C2), separated by set. All values are relative to the normalized measured widths for each subject.**
 
 | Subject/Set | SW (C1) | SW (C2) | HW (C1) | HW (C2) |
@@ -90,15 +98,7 @@ The results for the body dimension comparisons are presented first. Fig. 3 shows
 | 4/1 | 29.05% | 5.71% | 11.90% | 24.23% |
 | 4/2 | 29.78% | 11.22% | 12.06% | 33.81% |
 
-widths were also normalized. Then, the root-mean-squareerror (RMSE) was calculated over all frames in which a person was detected. The results are given in Tab. 2. The maximum RMSE of the shoulder width is calculated for subject 4, (S2, C1), being 29.78% off of the true value. The maximum RMSE of the hip width is calculated for subject 3, (S2, C1), being 34.37% off of the mean true value. This also highlights the dependency on the viewing angle, where the 45∘ angle chosen by subject four for the second set, seems to be particularly bad for the estimation. For the first sets, where the camera viewing angles do not change between subjects, the RMSE for the shoulder widths is always less for C2 than C1. This can be expected, as for C1, the shoulder joints lie directly behind one another, with the first occluding the second, impeding the estimation. Interestingly, this does not hold true for the hip width, which most of the times behaves exactly opposite to the shoulder width when comparing C1 and C2.
-
 The results for the angle estimation of subject 4 are presented in Fig. 4 as an example. From the first set, the viewing angle dependency is once again apparent. C2 is constantly overestimating the angle while C1 matches the true value almost perfectly. This again is expected since the angle is predominantly in the x-y-plane of C1, and therefore highly visible. From the second graph, it is interesting to note that the estimation quality does not degrade as much as it did for the width estimations. Instead, both cameras manage to estimate the angle rather well. The biggest deviations from the true value are visible when the angle approaches 0∘.
-
-![Fig. 3: Boxplot showing the shoulder width of subject 4, estimated for each set (S1/S2) and from both cameras (C1/C2).](assets/De_Gruyter_Accuracy_Evaluation_3D_Pose/fig_p3_1.png)
-
-*Fig. 3: Boxplot showing the shoulder width of subject 4, estimated for each set (S1/S2) and from both cameras (C1/C2).*
-
-To combat the bias, the estimated widths were normalized by the estimated shoulder heights. Similarly, the measured
 
 Tab. 3 shows the RMSE of important angles over all subjects for all exercises. The table once again suggests a high dependency of the camera’s viewing angle. Furthermore, it is apparent that the angle estimation works best for the squat exercise, where the subjects are standing. On the other hand, the error is the highest for the ground swimming exercise where
 
@@ -106,17 +106,7 @@ the subjects are lying on the ground. This is to be expected considering the set
 
 S. Dill et al., Accuracy evaluation of MediaPipe Pose for physical exercise analysis
 
-![Figure p.4](assets/De_Gruyter_Accuracy_Evaluation_3D_Pose/fig_p4_1.png)
-
-![Fig. 4: Plot showing the right knee angles of subject 4 while performing two repetitions of the squat exercise. The first set is shown at the top and the second set is shown at the bottom.](assets/De_Gruyter_Accuracy_Evaluation_3D_Pose/fig_p4_2.png)
-
-*Fig. 4: Plot showing the right knee angles of subject 4 while performing two repetitions of the squat exercise. The first set is shown at the top and the second set is shown at the bottom.*
-
-smaller the area visible to the camera becomes. Furthermore, the probability for self-occlusion increases.
-
-## 4 Conclusion
-
-In this work, we have performed a qualitative assessment of MediaPipe’s pose estimation by conducting an experiment where several subjects performed physical exercises and comparing metrics relevant to physical therapy to a ground truth recorded by a motion capture system. From our results, it can be seen, that the pose estimation is highly dependent on the camera’s viewing angle as well as the performed exercise. While high accuracy can be achieved when the subject is performing a standing exercise under an optimal angle, the accuracy quickly declines when the angle is less favourable or the exercise inherently causes self-occlusion. The next logical step to increase accuracy would be to fuse the pose information provided by the two cameras. This would both reduce the dependency on the angle and limit the influence of self-occlusion. Another approach could be to employ bio-
+![Figure p.4](assets/Accuracy_Evaluation_of_3D_Pose_Estimation_with_MediaPipe_Pose_fo/fig_p4_1.png)
 
 **Tab. 3: RMSE over all subjects of one important angle for each exercise, for both sets and cameras. RE: right elbow angle, RK: right knee angle. All values are given in degree (∘).**
 
@@ -127,6 +117,16 @@ In this work, we have performed a qualitative assessment of MediaPipe’s pose e
 | Squat/RK | 9.14 | 14.19 | 12.45 | 14.48 |
 | Kick-Back/RK | 24.27 | 18.76 | 24.90 | 25.56 |
 | Swimming/RE | 23.48 | 50.76 | 42.22 | 42.61 |
+
+![Fig. 4: Plot showing the right knee angles of subject 4 while performing two repetitions of the squat exercise. The first set is shown at the top and the second set is shown at the bottom.](assets/Accuracy_Evaluation_of_3D_Pose_Estimation_with_MediaPipe_Pose_fo/fig_p4_2.png)
+
+*Fig. 4: Plot showing the right knee angles of subject 4 while performing two repetitions of the squat exercise. The first set is shown at the top and the second set is shown at the bottom.*
+
+smaller the area visible to the camera becomes. Furthermore, the probability for self-occlusion increases.
+
+## 4 Conclusion
+
+In this work, we have performed a qualitative assessment of MediaPipe’s pose estimation by conducting an experiment where several subjects performed physical exercises and comparing metrics relevant to physical therapy to a ground truth recorded by a motion capture system. From our results, it can be seen, that the pose estimation is highly dependent on the camera’s viewing angle as well as the performed exercise. While high accuracy can be achieved when the subject is performing a standing exercise under an optimal angle, the accuracy quickly declines when the angle is less favourable or the exercise inherently causes self-occlusion. The next logical step to increase accuracy would be to fuse the pose information provided by the two cameras. This would both reduce the dependency on the angle and limit the influence of self-occlusion. Another approach could be to employ bio-
 
 mechanical movement models that the pose information is fitted to. This way it could be ensured that certain body proportions remain constant.
 
