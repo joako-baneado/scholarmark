@@ -1,8 +1,9 @@
-# 🏛️ Especificación Arquitectónica Completa: ScholarMark v4.1
+# 🏛️ Especificación Arquitectónica Completa: ScholarMark v5.0
 
 > **Documento Maestro de Arquitectura de Software, Contratos de Interfaz y Blueprint de Replicación.**  
-> *Versión del Software:* v4.1.0  
-> *Propósito:* Proporcionar una descripción exhaustiva, autosuficiente y matemáticamente precisa de cada componente, algoritmo, estructura de datos y flujo de información de ScholarMark, de tal forma que cualquier desarrollador o equipo de ingeniería pueda reconstruir el sistema completo sin ambigüedad.
+> *Versión del Software:* v5.0.0  
+> *Arquitectura:* Uncertainty-Gated Micro-Hybrid Architecture  
+> *Propósito:* Proporcionar una descripción exhaustiva, autosuficiente y matemáticamente precisa de cada componente, algoritmo, estructura de datos y flujo de información de ScholarMark v5.0, integrando cobertura universal (P0-P3) con 0 MB VRAM por defecto y micro-modelos ONNX condicionales.
 
 ---
 
@@ -13,20 +14,22 @@
 3. [Estructura del Proyecto y Mapeo de Componentes](#3-estructura-del-proyecto-y-mapeo-de-componentes)
 4. [El Modelo Canónico Intermedio: DocumentIR](#4-el-modelo-canónico-intermedio-documentir)
 5. [Desglose Técnico de Cada Componente y Algoritmo](#5-desglose-técnico-de-cada-componente-y-algoritmo)
-   - [5.1. PageContext: Extracción de Paso Único en Memoria](#51-pagecontext-extracción-de-paso-único-en-memoria)
+   - [5.1. PageContext: Hash Espacial 16x16 y Triaje de Escaneados](#51-pagecontext-hash-espacial-16x16-y-triaje-de-escaneados)
    - [5.2. Geometría Vectorial y Agrupamiento Transitivo Union-Find](#52-geometría-vectorial-y-agrupamiento-transitivo-union-find)
    - [5.3. LayoutDetector: Detección Multimodal y Compuertas Heurísticas](#53-layoutdetector-detección-multimodal-y-compuertas-heurísticas)
    - [5.4. SpanMapper: Mapeo Vectorial Nativo, Kerning y Retención 100%](#54-spanmapper-mapeo-vectorial-nativo-kerning-y-retención-100)
-   - [5.5. FormulaRecognizer: Reconstrucción 2D, Multilínea y Saneamiento PUA](#55-formula-recognizer-reconstrucción-2d-multilínea-y-saneamiento-pua)
-   - [5.6. TableRecognizer: Tablas Jerárquicas HTML/Booktabs y Visión Local](#56-table-recognizer-tablas-jerárquicas-htmlbooktabs-y-visión-local)
+   - [5.5. FormulaRecognizer: Invariante de Radicales, Matrices y Compuerta UniMERNet](#55-formula-recognizer-invariante-de-radicales-matrices-y-compuerta-unimernet)
+   - [5.6. TableRecognizer: Continuación Multilínea, Transposición 90° y SLANet](#56-table-recognizer-continuación-multilínea-transposición-90-y-slanet)
    - [5.7. AlgorithmRecognizer: Reconstrucción Jerárquica de Pseudocódigo](#57-algorithm-recognizer-reconstrucción-jerárquica-de-pseudocódigo)
    - [5.8. CaptionMatcher: Grafo Bipartito 1:N y Solver Bitmask DP](#58-caption-matcher-grafo-bipartito-1n-y-solver-bitmask-dp)
    - [5.9. ChartSemanticsExtractor: Minería de Texto Interno en Gráficos](#59-chart-semantics-extractor-minería-de-texto-interno-en-gráficos)
-   - [5.10. ReadingOrder: Solucionador Topológico DAG y XY-Cut Recursivo](#510-reading-order-solucionador-topológico-dag-y-xy-cut-recursivo)
-   - [5.11. CitationLinker y BibliographyParser: Grafo de Evidencia RAG](#511-citation-linker-y-bibliography-parser-grafo-de-evidencia-rag)
+   - [5.10. ReadingOrder: Enmascaramiento XY-Cut++ y Costura Multi-Hop](#510-reading-order-enmascaramiento-xy-cut-y-costura-multi-hop)
+   - [5.11. CitationLinker: Rangos en Superíndices y Validación O(1)](#511-citation-linker-rangos-en-superíndices-y-validación-o1)
    - [5.12. SemanticChunker: Particionador Jerárquico Atómico para RAG](#512-semantic-chunker-particionador-jerárquico-atómico-para-rag)
    - [5.13. Motores de Extracción Intercambiables (Vision, Fast, Docling)](#513-motores-de-extracción-intercambiables-vision-fast-docling)
    - [5.14. Serialización, Manifiesto y Caché Determinista](#514-serialización-manifiesto-y-caché-determinista)
+   - [5.15. LocalOCREngine: Bounded Shape Cache y Aceleración OpenVINO](#515-localocrengine-bounded-shape-cache-y-aceleración-openvino)
+   - [5.16. Multilingüismo, Química 2D e IPC Ligero](#516-multilingüismo-química-2d-e-ipc-ligero)
 6. [Contratos de Interfaz y Esquemas de Datos](#6-contratos-de-interfaz-y-esquemas-de-datos)
 7. [Diagrama de Secuencia de Procesamiento](#7-diagrama-de-secuencia-de-procesamiento)
 8. [Blueprint de Replicación Paso a Paso](#8-blueprint-de-replicación-paso-a-paso)
@@ -39,18 +42,19 @@
 ### 1.1. El Problema Científico y de Ingeniería
 Los artículos científicos (papers) publicados por editoriales como IEEE, ACM, Springer, Elsevier o MDPI presentan desafíos estructurales extremos para los Large Language Models (LLMs) y los sistemas de Retrieval-Augmented Generation (RAG):
 1. **Entrelazado de Doble/Triple Columna:** Los parsers OCR estándar leen líneas horizontalmente cruzando la medianera (*gutter*), intercalando palabras de columnas distintas y destruyendo la sintaxis.
-2. **Destrucción de Fórmulas Matemáticas:** Ecuaciones bidimensionales (fracciones con barra divisoria, subíndices/superíndices, matrices) se aplanan en cadenas ASCII incoherentes o se confunden con tablas de 16 columnas vacías.
+2. **Destrucción de Fórmulas Matemáticas:** Ecuaciones bidimensionales (fracciones con barra divisoria, subíndices/superíndices, matrices, radicales anidados) se aplanan en cadenas ASCII incoherentes o se confunden con tablas de 16 columnas vacías.
 3. **Pérdida de Figuras y Diagramas:** Las figuras vectoriales compuestas por miles de trazados Bezier son ignoradas o se extraen como cientos de fragmentos inconexos.
 4. **Glifos Corruptos y PUA:** Fuentes matemáticas Type 1 incrustadas sin tabla `/ToUnicode` generan caracteres en el Área de Uso Privado (`PUA` $U+E000$–$U+F8FF$) o el símbolo de reemplazo Unicode ($U+FFFD$).
-5. **Tablas Complejas y Booktabs:** Las tablas sin líneas verticales (*booktabs*) y con encabezados multinivel (`colspan` / `rowspan`) se desalinean por completo en Markdown plano.
+5. **Tablas Complejas y Booktabs:** Las tablas sin líneas verticales (*booktabs*), con celdas de texto partidas en múltiples líneas o rotadas en apaisado (landscape 90°) se desalinean por completo en Markdown plano.
 
 ### 1.2. Principios Arquitectónicos Fundamentales
-ScholarMark fue diseñado bajo cinco axiomas de ingeniería:
+ScholarMark fue diseñado bajo seis axiomas de ingeniería:
 - **0 MB VRAM por Defecto:** Inferencia nativa en CPU. No requiere GPUs de 24 GB ni modelos pesados de visión por defecto. Se ejecuta a $2\text{--}4\text{ s}$ por paper en cualquier laptop o contenedor estándar.
 - **Complejidad de Memoria Estricta $O(N)$:** El consumo de RAM no depende del número de páginas acumuladas; cada página se procesa y libera en memoria.
 - **Cero Alucinación (Grounding Vectorial Nativo):** El texto de prosa nunca es generado por un modelo generativo; proviene 100% de los spans de texto nativos del PDF extraídos a nivel de coordenadas vectoriales.
-- **Single-Pass PageContext:** Se realiza **una sola llamada** por página a las APIs de bajo nivel de PyMuPDF (`rawdict`, `bboxlog`, `drawings`), sintetizando estructuras en RAM para que ningún módulo downstream vuelva a invocar llamadas costosas C/CFFI.
-- **Compuertas Selectivas (Lazy Gating):** Operaciones computacionalmente caras (como `page.find_tables()` o inferencia OCR sobre mapa de bits) están bloqueadas por guardas geométricas rápidas en Python y solo se activan cuando la evidencia heurística lo exige.
+- **Single-Pass PageContext con Spatial Hash 16x16:** Se realiza **una sola llamada** por página a las APIs de bajo nivel de PyMuPDF (`rawdict`, `bboxlog`, `drawings`), sintetizando estructuras en RAM y aislando clústeres hiperdensos mediante una cuadrícula de hash espacial de 16x16 celdas, rescatando reglas delgadas fuera de zonas densas.
+- **Compuertas Selectivas por Incertidumbre (Uncertainty-Gated Micro-Models):** Micro-modelos ONNX especializados (PP-DocLayout-S de 1.21M, SLANet de 1.48M, UniMERNet-Tiny) permanecen en disco con 0 MB VRAM y solo se cargan de forma perezosa (`lazy`) cuando las heurísticas geométricas determinan alta ambigüedad estructural, o en páginas escaneadas/Type-3.
+- **Aceleración Abierta y Multi-Plataforma:** Aceleración por hardware mediante OpenVINO en CPU Intel/AMD con un búfer acotado LRU de formas tenoriales (Bounded Shape Cache, capacidad 20), sin reasignaciones costosas en bucle.
 
 ---
 
@@ -208,11 +212,11 @@ class Block:
 
 ## 5. Desglose Técnico de Cada Componente y Algoritmo
 
-### 5.1. PageContext: Extracción de Paso Único en Memoria
+### 5.1. PageContext: Hash Espacial 16x16 y Triaje de Escaneados
 *Archivo:* `scholarmark/core/page_context.py`
 
 #### Problema que resuelve
-En un pipeline modular, múltiples componentes necesitan inspeccionar texto, primitivas de dibujo y cajas de imágenes. Si cada componente llama a `page.get_text("rawdict")`, `page.get_drawings()` o `page.get_text("words")`, la sobrecarga de conversión C-Python a través de PyMuPDF degrada el rendimiento a más de $800\text{ ms}$ por página.
+En un pipeline modular, múltiples componentes necesitan inspeccionar texto, primitivas de dibujo y cajas de imágenes. Si cada componente llama a `page.get_text("rawdict")`, `page.get_drawings()` o `page.get_text("words")`, la sobrecarga de conversión C-Python a través de PyMuPDF degrada el rendimiento a más de $800\text{ ms}$ por página. Asimismo, en versiones anteriores, si una página contenía un scatter plot con más de $20,000$ primitivas en `bboxlog`, el sistema descartaba la totalidad de los dibujos vectoriales, perdiendo las líneas de tablas (*booktabs rules*) ubicadas en otras partes de la página.
 
 #### Mecánica del Algoritmo
 `PageContext.from_page(page, page_num, max_primitives=20000)` ejecuta exactamente **un pase** al inicio de la página:
@@ -220,9 +224,14 @@ En un pipeline modular, múltiples componentes necesitan inspeccionar texto, pri
 2. Itera simultáneamente sobre bloques, líneas, spans y caracteres (`chars`), construyendo en un solo pase lineal:
    - La lista de palabras `words`: tuplas `(x0, y0, x1, y1, texto, b_idx, l_idx, w_idx)`. Si la distancia física entre caracteres adyacentes supera $0.18 \times \text{font\_size}$, divide la palabra automáticamente (reparación de fuentes con kerning sin espacio explícito).
    - El texto plano completo `full_text`.
-3. Llama a `bboxlog = page.get_bboxlog()`. Si `len(bboxlog) <= max_primitives`, extrae los dibujos vectoriales con `page.get_drawings()`; de lo contrario, deja la lista vacía para evitar bloqueos en scatter plots con millones de puntos.
+   - Normalización de fuentes y detección de fuentes `Type 3` (`has_type3_fonts`).
+3. Llama a `bboxlog = page.get_bboxlog()`.
+   - **Partición Espacial 16x16 (`_partition_dense_bboxlog_16x16`):** Si `len(bboxlog) > max_primitives`, en lugar de un apagado binario global, divide el canvas en una cuadrícula discreta de $16 \times 16$ celdas. Se calculan las densidades por celda; las celdas con más de $800$ primitivas se aíslan como zonas vectoriales hiperdensas.
+   - **Rescate de Reglas Fuera de Zonas Densas:** Se extraen directamente de `bboxlog` las primitivas lineales delgadas (`height <= 3.0 pt` o `width <= 3.0 pt`) situadas fuera de las zonas hiperdensas, garantizando que las líneas de tablas *booktabs* se rescaten al 100% incluso en páginas con gráficos de dispersión masivos.
+   - Si `len(bboxlog) <= max_primitives`, extrae los dibujos vectoriales completos con `page.get_drawings()`.
 4. Inspecciona `page.get_images()` y `page.get_image_rects(xref)` una sola vez, guardando `image_boxes`.
-5. Provee métodos de consulta en memoria:
+5. **Triaje de Páginas Escaneadas:** Evalúa `is_scanned = (len(words) == 0 and len(image_boxes) > 0)` para compuertas downstream automáticas de OCR rápido.
+6. Provee métodos de consulta en memoria:
    - `clip_words(bbox, pad)`: filtra la lista en RAM sin tocar el motor de PDF.
    - `clip_rawdict(bbox, pad)`: filtra el árbol diccionario `raw_dict` podando líneas y spans fuera de la caja envolvente.
 
@@ -316,7 +325,7 @@ Todas las líneas nativas del PDF tienen un flag booleano `consumed`. Al finaliz
 
 ---
 
-### 5.5. FormulaRecognizer: Reconstrucción 2D, Multilínea y Saneamiento PUA
+### 5.5. FormulaRecognizer: Invariante de Radicales, Matrices y Compuerta UniMERNet
 *Archivo:* `scholarmark/recognizers/formula.py`
 
 #### Saneamiento de Glifos PUA y Fuentes Corruptas
@@ -336,9 +345,21 @@ Cuando un PDF contiene fuentes Type 1 matemáticas antiguas sin `/ToUnicode`, lo
 5. Se invoca la función recursivamente:
    $$\text{LaTeX} = \text{reconstruct}(\text{left}) + \verb| \frac{| + \text{reconstruct}(\text{num}) + \verb|}{| + \text{reconstruct}(\text{den}) + \verb|} | + \text{reconstruct}(\text{right})$$
 
-#### Matrices y Sistemas Multilínea
-- **Matrices ($\begin{pmatrix}$):** Si los tokens no contienen el signo '=' y forman una cuadrícula regular de $R \ge 2$ filas y $C \ge 2$ columnas con alineación vertical estricta ($\Delta cx \le 28\text{ pt}$ entre filas para la misma columna), se serializan con delimitadores `&` y `\\`.
-- **Sistemas Multilínea ($\begin{aligned}$):** Si los tokens principales se agrupan en $K \ge 2$ bandas horizontales disjuntas en $Y$ (sin una barra de fracción intermedia), se reconstruye cada fila por separado y se alinean en torno al primer signo '=' reemplazándolo por `&=`.
+#### Invariante de Conectividad de Radicales ($\sqrt[n]{x}$)
+En ScholarMark v5.0, `_reconstruct_radicals` modela la geometría de raíces cuadradas y enésimas como un árbol de conectividad invariante:
+- Se empareja la barra horizontal del vínculo superior (*vinculum*, `height <= 2.8 pt`) con el símbolo raíz precedente ($\surd$ o glifo $\sqrt{}$ con $x_1 \approx \text{bar}.x_0$).
+- Se detecta el índice de la raíz $n$ como tokens superiores a la izquierda del vínculo ($t.cy < \text{bar}.y_0, t.cx < \text{bar}.x_0$).
+- Los tokens situados bajo el vínculo ($t.cy \ge \text{bar}.y_0, \text{bar}.x_0 \le t.cx \le \text{bar}.x_1$) se aíslan como radicando y se procesan recursivamente:
+  $$\text{LaTeX} = \verb|\sqrt| + ([\text{index}] \text{ if index else } "") + \verb|{| + \text{reconstruct}(\text{radicand}) + \verb|}|$$
+
+#### Matrices con Igualdades y Delimitadores
+- **Matrices y Sistemas:** Se detectan cuadrículas regulares de $R \ge 2$ filas y $C \ge 2$ columnas con alineación vertical estricta. A diferencia de v4.1, v5.0 admite prefijos de igualdad previos a la matriz (ej. $A = \begin{pmatrix} \dots \end{pmatrix}$) y preserva delimitadores exteriores (`[`, `(`, `{`).
+- **Sistemas Multilínea ($\begin{aligned}$):** Si los tokens principales se agrupan en $K \ge 2$ bandas horizontales disjuntas en $Y$, se reconstruye cada fila por separado y se alinean en torno al signo '=' (`&=`).
+
+#### Compuerta Micro-ONNX UniMERNet-Tiny
+Para fórmulas manuscritas o de complejidad no resoluble vectorialmente (confianza heurística $< 0.50$):
+- Se activa la compuerta condicional a UniMERNet-Tiny ONNX (si está presente en caché de modelos).
+- Infiere el tokenizado LaTeX directamente desde el mapa de bits recortado de la fórmula, validándolo con KaTeX.
 
 #### Validación Sintáctica KaTeX
 Antes de emitir el código, `validate_katex_syntax(latex)` verifica:
@@ -348,27 +369,31 @@ Antes de emitir el código, `validate_katex_syntax(latex)` verifica:
 
 ---
 
-### 5.6. TableRecognizer: Tablas Jerárquicas HTML/Booktabs y Visión Local
+### 5.6. TableRecognizer: Continuación Multilínea, Transposición 90° y SLANet
 *Archivo:* `scholarmark/recognizers/table.py`
 
-#### Inferencia de Anclajes de Columna
-1. Se extraen todas las palabras dentro del bbox y se agrupan en líneas horizontales por cercanía de centroide vertical ($|\Delta cy| \le 5\text{ pt}$).
-2. Se fusionan palabras en celdas contiguas si el espacio horizontal es $\le 8.5\text{ pt}$.
-3. Se determinan las filas más densas (con el máximo número de celdas). Los intervalos $[x_0, x_1]$ de estas celdas definen los **anclajes columnares** de la tabla:
-   $$\text{col\_anchors} = [(x_{0, c}, x_{1, c})]_{c=0}^{M-1}$$
+#### Fusión de Continuación de Filas Multilínea
+En tablas complejas, descripciones extensas se envuelven en múltiples líneas físicas dentro de la misma celda lógica:
+- `_merge_multiline_row_continuations` evalúa líneas consecutivas con separación vertical pequeña ($gap_y \le 1.5 \times \text{line\_height}$).
+- Si la línea inferior no tiene celdas en la primera columna o posee alineación indentada respecto a la celda superior, se concatena como continuación de la celda de la fila anterior, eliminando filas espurias fragmentadas.
 
-#### Cálculo de `colspan` y `rowspan`
-- Si una celda abarca horizontalmente múltiples anclajes contiguos (su centroide o solapamiento cubre desde la columna $c_i$ hasta $c_j$), se le asigna `colspan = j - i + 1`.
-- Para encabezados de dos niveles: si la fila 0 tiene menos celdas que el total de columnas y las columnas subyacentes se agrupan bajo sus etiquetas, se expande su `colspan` o se asigna `rowspan = 2` a las columnas que no cambian de valor en la fila 1.
+#### Inferencia de Anclajes de Columna Proyectados (Union Projection)
+1. Se extraen todas las palabras dentro del bbox y se agrupan en líneas horizontales por cercanía de centroide vertical ($|\Delta cy| \le 5\text{ pt}$).
+2. Se fusionan palabras en celdas contiguas si el espacio horizontal es $\le 4.5\text{ pt}$ (evitando fusiones accidentales de columnas adyacentes tras padding OCR).
+3. En v5.0, los anclajes columnares se computan mediante la unión proyectada de intervalos $[x_0, x_1]$ de todas las filas con conteo de celdas significativo, fusionando intervalos solapados para cubrir columnas discontinuas o dispersas.
+
+#### Transposición de Tablas Apaisadas (Landscape 90°)
+Si la tabla está maquetada horizontalmente a 90° (rotada para ocupar el ancho de la página):
+- `_detect_and_transpose_landscape` detecta la orientación del texto (mediante `dir` vectorial o dimensiones relativas y orden vertical de spans).
+- Transpone automáticamente las coordenadas relativas $(x, y) \to (y, -x)$, reconstruyendo la tabla verticalmente en HTML/GFM estándar legible.
 
 #### Salida Dual: HTML Semántico vs. GFM
-- **Si la tabla tiene celdas combinadas (`has_merged == True`):** Se emite exclusivamente código `<table>` HTML semántico con atributos `colspan` y `rowspan`. Esto previene que un LLM interprete filas desplazadas en GFM.
+- **Si la tabla tiene celdas combinadas (`has_merged == True`):** Se emite exclusivamente código `<table>` HTML semántico con atributos `colspan` y `rowspan`.
 - **Si la tabla es plana (`has_merged == False`):** Se emite tanto HTML como GitHub Flavored Markdown (`| Col1 | Col2 | ... |`).
 
-#### Fallback de Visión Híbrida Local (RapidOCR ONNX)
-Si una región fue clasificada como tabla pero carece de spans de texto vectorial nativos (tablas escaneadas en PDFs antiguos o tablas donde los glifos fueron convertidos en curvas Bezier por software de maquetación):
-1. Se activa la compuerta: `LocalOCREngine` (singleton perezoso de `rapidocr_onnxruntime`).
-2. Se recorta el pixmap de la región a $200\text{ DPI}$.
+#### Compuerta de Estructura SLANet (PP-LCNet) y OCR Local
+- **SLANet (PP-LCNet ONNX):** Compuerta condicional de micro-modelo (1.48M parámetros) para predecir la estructura de celdas y spans en tablas visuales de alta ambigüedad.
+- **LocalOCREngine:** Si una región carece de texto vectorial (tabla escaneada), `LocalOCREngine` (RapidOCR ONNX) recorta la región a $200\text{ DPI}$, proyecta las cajas al espacio de puntos del PDF y reconstruye la tabla.
 3. RapidOCR extrae los cuadros de texto y los proyecta matemáticamente de vuelta a coordenadas del PDF ($72\text{ DPI}$).
 4. Se alimentan estos cuadros a la lógica de inferencia de anclajes columnares, reconstruyendo la tabla en HTML con `<table data-source="local-ocr">`.
 
@@ -449,25 +474,25 @@ Permite a los sistemas RAG responder preguntas cuantitativas sobre figuras sin r
 
 ---
 
-### 5.10. ReadingOrder: Solucionador Topológico DAG y XY-Cut Recursivo
+### 5.10. ReadingOrder: Enmascaramiento XY-Cut++ y Costura Multi-Hop
 *Archivo:* `scholarmark/layout/reading_order.py`
 
-#### Ordenamiento Multicolumna y XY-Cut en Bandas
+#### Ordenamiento Multicolumna y XY-Cut++ con Enmascaramiento de Flotantes
 Para resolver documentos con mezcla de secciones a 1 columna y 2/3 columnas:
 1. **Segregación Inmediata de Notas al Pie:** Todos los bloques `footnote` se extraen de la secuencia principal y se depositan al final de la página. Esto elimina el problema clásico de que la lectura salte al pie de página en medio de una frase de la columna izquierda.
-2. **Barreras de Sincronización (Spanning Blocks):** Cualquier bloque que cruce las medianeras verticales o tenga un ancho $\ge 0.58 \times \text{page\_width}$ (título, resumen, figuras de ancho completo) actúa como corte horizontal divisor ($Y$-Cut).
-3. **Ordenamiento de Bandas:** En el espacio entre dos barreras, los bloques se particionan según la medianera: se leen todos los bloques de la Columna 0 de arriba a abajo, seguidos de los de la Columna 1, y así sucesivamente.
+2. **Enmascaramiento de Flotantes XY-Cut++ (`_mask_spanning_floats_xycut`):** En v5.0, figuras o tablas flotantes que abarcan ancho completo no dividen rígidamente el texto de una columna continua si el texto fluye sin interrupción lógica alrededor del flotante. El enmascarador aísla temporalmente el flotante como una máscara espacial independiente, ejecuta el particionamiento topológico de columnas de prosa y luego inserta el flotante en el punto de sincronización semántica más próximo.
+3. **Ordenamiento de Bandas:** En el espacio entre barreras definitivas, los bloques se particionan según la medianera: se leen todos los bloques de la Columna 0 de arriba a abajo, seguidos de los de la Columna 1, y así sucesivamente.
 
-#### Costura de Párrafos Inter-Página (`stitch_cross_page_paragraphs`)
-Cuando una oración se parte entre el final de la página $k$ y el inicio de la página $k+1$, los extractores comunes colocan las figuras o tablas flotantes que encabezan la página $k+1$ en medio de la oración rota.
-- ScholarMark detecta si el último bloque de texto de la página $k$ carece de puntuación terminal (`.`, `!`, `?`, `:`) y el primer bloque de texto de la página $k+1$ inicia con minúscula.
-- Si existen figuras o tablas flotantes al inicio de la página $k+1$, **adelanta el bloque de texto antes de los flotantes**.
+#### Costura de Párrafos Multi-Hop Inter-Página (`stitch_cross_page_paragraphs`)
+Cuando una oración se parte entre el final de la página $k$ y el inicio de la página $k+1$ (o incluso $k+2$ si la página intermedia está ocupada al 100% por tablas o figuras apaisadas):
+- ScholarMark detecta si el último bloque de texto de la página $k$ carece de puntuación terminal (`.`, `!`, `?`, `:`) y el primer bloque de texto de la página $k+1$ (o $k+2$ en multi-hop) inicia con minúscula.
+- Si existen figuras o tablas intermedias o al inicio de la página destino, **adelanta el bloque de texto antes de los flotantes**.
 - Une léxicamente ambas mitades, eliminando guiones de separación silábica al final de línea (`hyphen-` + `ation` $\to$ `hyphenation`).
-- Marca el segundo bloque como `kind = "abandon"` para que no se duplique en la serialización.
+- Marca el bloque continuador como `kind = "abandon"` para que no se duplique en la serialización.
 
 ---
 
-### 5.11. CitationLinker y BibliographyParser: Grafo de Evidencia RAG
+### 5.11. CitationLinker: Rangos en Superíndices y Validación O(1)
 *Archivo:* `scholarmark/core/citations.py`
 
 #### Parser Estructural de Bibliografía
@@ -477,10 +502,11 @@ Localiza la sección `## References` y descompone cada entrada en un objeto tipa
 - Extrae mediante expresiones regulares: `authors`, `year`, `title` (entrecomillado), `venue` y `doi` (patrón `10.\d{4,9}/...`).
 - Almacena el catálogo estructurado en `DocumentIR.meta["bibliography"]`.
 
-#### Expansión de Marcadores y Grafo de Citas
-- Expande rangos numéricos: `[1]–[4]` o `[1]-[4]` se traduce en la lista `["1", "2", "3", "4"]`.
-- Grupos compuestos: `[1, 3, 5–7]` se convierte en `["1", "3", "5", "6", "7"]`.
-- Enlaza cada marcador con el `id` de bloque donde ocurre y registra en `b.metadata["citations"]`.
+#### Expansión de Marcadores y Rangos en Superíndices
+En ScholarMark v5.0, `expand_citation_markers` amplía la cobertura para capturar citas en formato superíndice editorial ($^{1,3-5}$, $^{[1,3-5]}$, $^{2}$):
+- **Desambiguación de Exponentes Matemáticos:** Analiza el token y operador previo a la etiqueta en superíndice. Si el token base es una variable matemática corta (longitud $\le 2$, ej. $mc^2$, $x^3$), base decimal ($10^5$), o va precedido de operadores de ecuación (`=`, `+`, `-`, `/`, `*`), se clasifica estrictamente como potencia matemática y se descarta de las citas.
+- **Validación Bibliográfica $O(1)$:** Los marcadores numéricos extraídos se validan instantáneamente contra el conjunto de claves `known_ref_keys` de la bibliografía de la página/documento. Si una supuesta cita no existe en la bibliografía, no se enlaza espuriamente.
+- Expande rangos numéricos continuos: `[1]–[4]` $\to$ `["1", "2", "3", "4"]`, y grupos compuestos: `^{1, 3, 5-7}` $\to$ `["1", "3", "5", "6", "7"]`.
 
 #### Anclaje de Afirmaciones Cuantitativas (`GroundedClaim`)
 El sistema escanea oraciones que contienen simultáneamente:
@@ -535,6 +561,47 @@ Registra en `.scholarmark/cache_index.json` un hash SHA-1 determinista (`config_
 *Archivo:* `scholarmark/core/geometry.py` (`export_figure_asset`)
 - **Imágenes Ráster:** Si la figura corresponde a una imagen incrustada pura (`IoU >= 0.85`), se extrae el stream de bytes original del objeto XREF del PDF sin recodificar.
 - **Gráficos Vectoriales:** Se renderiza a $300\text{ DPI}$ con matriz afín de PyMuPDF (`alpha=False` para evitar halos de antialiasing). Si el área es grande ($>15,000\text{ pt}^2$) y carece de texto diminuto, se escala a $200\text{ DPI}$ para ahorrar un $55\%$ de espacio en disco sin pérdida de legibilidad.
+
+---
+
+### 5.15. LocalOCREngine: Bounded Shape Cache y Aceleración OpenVINO
+*Archivo:* `scholarmark/recognizers/ocr_engine.py`
+
+#### Caché Acotada LRU de Formas Tenoriales (Bounded Shape Cache)
+En el procesamiento de recortes de tablas y regiones escaneadas, RapidOCR redimensiona dinámicamente las entradas con relleno divisible entre 64. Si la sesión recrea tensores y memoria intermedia en cada invocación, la sobrecarga del garbage collector ralentiza la extracción en bucles masivos:
+- `LocalOCREngine` implementa un búfer acotado LRU con capacidad máxima fija de **20 formas** (`max_cache_size=20`).
+- Si la imagen procesada coincide con una tupla `(H, W)` registrada recientemente, reutiliza los búferes y metadatos preasignados.
+- Al superar las 20 variantes de resolución, se desalojan las entradas más antiguas en $O(1)$ sin fugas de memoria.
+
+#### Aceleración Transparente por Hardware con OpenVINO
+Para procesadores Intel Core y Xeon (y CPUs compatibles con OpenVINO):
+- `LocalOCREngine` verifica la presencia de la librería `openvino` (`openvino>=2024.0.0`).
+- Si está instalada, configura el Execution Provider `OpenVINOExecutionProvider` sobre ONNX Runtime o inicializa el motor OpenVINO nativo, optimizando la inferencia INT8/FP16 con instrucciones AVX-512 / VNNI sin requerir GPU dedicada. Si no está disponible, realiza un fallback elegante y silencioso a `CPUExecutionProvider`.
+
+---
+
+### 5.16. Multilingüismo, Química 2D e IPC Ligero
+
+#### Normalización Unicode NFKC y Kerning CJK
+*Archivo:* `scholarmark/core/page_context.py` y `scholarmark/layout/span_mapper.py`  
+- **Descomposición de Ligaduras:** Aplica `unicodedata.normalize("NFKC", ...)` sobre todos los caracteres y textos extraídos, convirtiendo ligaduras tipográficas habituales en LaTeX/PDF ($\text{fi} \to \text{f}\text{i}$, $\text{fl} \to \text{f}\text{l}$, $\text{ffi} \to \text{f}\text{f}\text{i}$) en secuencias ASCII/Unicode estándar.
+- **Kerning CJK:** Detecta rangos de caracteres de ancho completo (CJK Unified Ideographs $U+4E00\text{--}U+9FFF$, Hiragana, Katakana, Hangul) suprimiendo la inserción artificial de espacios entre ideogramas adyacentes producida por el umbral de kerning occidental.
+
+#### Soporte BiDi RTL (Árabe y Hebreo)
+*Archivo:* `scholarmark/layout/span_mapper.py` (`reorder_bidi_text`)  
+- Cuando se habilita `--enable-bidi` y están presentes `arabic-reshaper` y `python-bidi`:
+- Aísla los prefijos estructurales de Markdown (`#`, `##`, `- `, `* `, `1. `) para evitar su inversión especular.
+- Remodela las formas contextuales de letras árabes y reordena las líneas bidireccionalmente, permitiendo la visualización nativa de derecha a izquierda (RTL) en visores Markdown estándar.
+
+#### Agrupación de Estructuras Químicas 2D y Compuerta OCSR
+*Archivo:* `scholarmark/layout/detector.py`  
+- Identifica diagramas moleculares 2D caracterizados por trazos poligonales cerrados (anillos de benceno, enlaces dobles/triples) asociados a fórmulas químicas huérfanas.
+- Si `--enable-ocsr` está activo, conmuta hacia la compuerta OCSR (Optical Chemical Structure Recognition) para emitir la cadena SMILES correspondiente en los metadatos del bloque (`metadata["smiles"]`).
+- Si está inactivo, protege la región para que no sea fragmentada como caracteres alfanuméricos aislados.
+
+#### Canal IPC Ligero en Procesamiento por Lotes
+*Archivo:* `scholarmark/extractor.py`  
+- La concurrencia multi-worker (`convert_batch`) minimiza la serialización entre procesos mediante un protocolo de paso de mensajes ligero (Fast-Path IPC), transmitiendo únicamente estadísticas resumidas y metadatos de manifiesto a través del proceso orquestador mientras los artefactos pesados (`.md`, `.json`, `.png`) se escriben directamente en disco desde el worker correspondiente de forma atómica.
 
 ---
 

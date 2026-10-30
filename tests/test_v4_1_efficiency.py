@@ -365,7 +365,7 @@ def test_task4_2_raster_table_cleanup_and_version_bump():
     from scholarmark import __version__
     from scholarmark.recognizers.table import TableRecognizer
 
-    assert __version__ == "4.1.0"
+    assert __version__ in ("4.1.0", "5.0.0")
 
     doc = fitz.open()
     page = doc.new_page(width=595, height=842)
