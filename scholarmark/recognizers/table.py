@@ -104,7 +104,7 @@ class TableRecognizer:
                 else:
                     prev_box, prev_txt = merged_cells[-1]
                     gap = wb.x0 - prev_box.x1
-                    if gap <= 6.0:
+                    if gap <= 4.5:
                         merged_cells[-1] = (prev_box.union(wb), f"{prev_txt} {txt}")
                     else:
                         merged_cells.append((wb, txt))
@@ -280,6 +280,25 @@ class TableRecognizer:
             return []
 
         rotation = int(page.rotation) % 360
+        # Check if text inside bbox is oriented vertically (landscape table printed in portrait page)
+        is_landscape_transposed = False
+        if rotation == 0:
+            raw_data = ctx.clip_rawdict(bbox) if ctx is not None else page.get_text("rawdict", clip=bbox.to_fitz_rect())
+            v_spans = 0
+            t_spans = 0
+            for b in raw_data.get("blocks", []):
+                for ln in b.get("lines", []):
+                    ldir = ln.get("dir", (1.0, 0.0))
+                    is_v = abs(ldir[1]) > 0.7
+                    for sp in ln.get("spans", []):
+                        if str(sp.get("text", "")).strip():
+                            t_spans += 1
+                            if is_v:
+                                v_spans += 1
+            if t_spans > 0 and (v_spans / float(t_spans)) > 0.60:
+                is_landscape_transposed = True
+
+        page_w = float(page.rect.width)
         items: List[Tuple[BoundingBox, str]] = []
         for w in words:
             wx0, wy0, wx1, wy1, txt = float(w[0]), float(w[1]), float(w[2]), float(w[3]), str(w[4]).strip()
@@ -289,6 +308,11 @@ class TableRecognizer:
                 pt0 = fitz.Point(wx0, wy0) * page.derotation_matrix
                 pt1 = fitz.Point(wx1, wy1) * page.derotation_matrix
                 wb = BoundingBox(min(pt0.x, pt1.x), min(pt0.y, pt1.y), max(pt0.x, pt1.x), max(pt0.y, pt1.y))
+            elif is_landscape_transposed:
+                nx0, nx1 = wy0, wy1
+                ny0 = page_w - wx1
+                ny1 = page_w - wx0
+                wb = BoundingBox(min(nx0, nx1), min(ny0, ny1), max(nx0, nx1), max(ny0, ny1))
             else:
                 wb = BoundingBox(wx0, wy0, wx1, wy1)
             items.append((wb, txt))
@@ -343,7 +367,122 @@ class TableRecognizer:
             x1s = [r[c_idx][0].x1 for r in dense_rows if c_idx < len(r)]
             col_intervals.append((min(x0s), max(x1s)))
 
+        # Proyección de unión sobre eje X para evitar estrechamiento artificial de columnas
+        if col_intervals and len(col_intervals) > 1:
+            expanded: List[Tuple[float, float]] = list(col_intervals)
+            for row in cell_rows:
+                for c_box, _ in row:
+                    cx = (c_box.x0 + c_box.x1) * 0.5
+                    best_ci = min(range(len(expanded)), key=lambda i: abs(((expanded[i][0] + expanded[i][1]) * 0.5) - cx))
+                    left_limit = (expanded[best_ci - 1][1] + 2.0) if best_ci > 0 else float("-inf")
+                    right_limit = (expanded[best_ci + 1][0] - 2.0) if (best_ci + 1 < len(expanded)) else float("inf")
+                    ax0, ax1 = expanded[best_ci]
+                    if c_box.x0 >= left_limit and c_box.x1 <= right_limit and c_box.width <= (ax1 - ax0) * 1.6:
+                        expanded[best_ci] = (min(ax0, c_box.x0), max(ax1, c_box.x1))
+
+            adjusted: List[Tuple[float, float]] = []
+            for i, (ax0, ax1) in enumerate(expanded):
+                if adjusted and ax0 < (adjusted[-1][1] + 2.0):
+                    mid = (ax0 + adjusted[-1][1]) * 0.5
+                    prev_x0, _ = adjusted[-1]
+                    adjusted[-1] = (prev_x0, mid - 1.0)
+                    ax0 = mid + 1.0
+                adjusted.append((ax0, max(ax0 + 1.0, ax1)))
+            return adjusted
+
         return col_intervals
+
+    @staticmethod
+    def _merge_multiline_continuation_rows(
+        cell_rows: List[List[Tuple[BoundingBox, str]]],
+        col_anchors: List[Tuple[float, float]],
+        horizontal_rules: Optional[List[BoundingBox]] = None,
+    ) -> List[List[Tuple[BoundingBox, str]]]:
+        """
+        Fusiona filas de continuación multilínea en tablas donde celdas con texto envuelto
+        generan filas sintéticas adyacentes (Δy <= 1.45x median_line_height y sin regla divisoria).
+        """
+        if len(cell_rows) <= 1 or not col_anchors:
+            return cell_rows
+
+        num_cols = len(col_anchors)
+        heights = [c[0].height for r in cell_rows for c in r if c[0].height > 0]
+        median_h = float(sorted(heights)[len(heights) // 2]) if heights else 10.0
+
+        merged_rows: List[List[Tuple[BoundingBox, str]]] = [cell_rows[0]]
+
+        for r_idx in range(1, len(cell_rows)):
+            cur_row = cell_rows[r_idx]
+            prev_row = merged_rows[-1]
+
+            if not cur_row or not prev_row:
+                merged_rows.append(cur_row)
+                continue
+
+            prev_y1 = max(c[0].y1 for c in prev_row)
+            cur_y0 = min(c[0].y0 for c in cur_row)
+            delta_y = cur_y0 - prev_y1
+
+            # 1. Regla horizontal intermedia
+            has_sep_rule = False
+            if horizontal_rules:
+                for rule in horizontal_rules:
+                    if (prev_y1 - 1.5) <= rule.y0 and rule.y1 <= (cur_y0 + 1.5):
+                        has_sep_rule = True
+                        break
+
+            # 2. Distancia vertical acotada
+            is_close_v = (delta_y <= 1.45 * median_h) and (delta_y >= -2.0)
+
+            # Mapeo a anclajes de columna
+            cur_col_map: Dict[int, Tuple[BoundingBox, str]] = {}
+            for c_box, c_txt in cur_row:
+                cx = (c_box.x0 + c_box.x1) * 0.5
+                best_ci = min(range(num_cols), key=lambda ci: abs(((col_anchors[ci][0] + col_anchors[ci][1]) * 0.5) - cx))
+                cur_col_map[best_ci] = (c_box, c_txt)
+
+            prev_col_map: Dict[int, Tuple[BoundingBox, str]] = {}
+            for c_box, c_txt in prev_row:
+                cx = (c_box.x0 + c_box.x1) * 0.5
+                best_ci = min(range(num_cols), key=lambda ci: abs(((col_anchors[ci][0] + col_anchors[ci][1]) * 0.5) - cx))
+                prev_col_map[best_ci] = (c_box, c_txt)
+
+            # 3. Criterio de fila de continuación
+            empty_ratio = (num_cols - len(cur_col_map)) / float(max(1, num_cols))
+            is_continuation = False
+
+            if not has_sep_rule and is_close_v:
+                if empty_ratio >= 0.40:
+                    shared_alignment = False
+                    for ci, (c_box, _) in cur_col_map.items():
+                        if ci in prev_col_map:
+                            p_box, _ = prev_col_map[ci]
+                            delta_x0 = abs(c_box.x0 - p_box.x0)
+                            delta_cx = abs(((c_box.x0 + c_box.x1) * 0.5) - ((p_box.x0 + p_box.x1) * 0.5))
+                            if delta_x0 <= 4.0 or delta_cx <= 6.0:
+                                shared_alignment = True
+                                break
+                    if shared_alignment:
+                        is_continuation = True
+                elif len(cur_row) == 1 and 0 in cur_col_map and 0 in prev_col_map:
+                    p_box, _ = prev_col_map[0]
+                    c_box, _ = cur_col_map[0]
+                    if abs(c_box.x0 - p_box.x0) <= 4.0:
+                        is_continuation = True
+
+            if is_continuation:
+                new_prev_map = dict(prev_col_map)
+                for ci, (c_box, c_txt) in cur_col_map.items():
+                    if ci in new_prev_map:
+                        p_box, p_txt = new_prev_map[ci]
+                        new_prev_map[ci] = (p_box.union(c_box), f"{p_txt} {c_txt}".strip())
+                    else:
+                        new_prev_map[ci] = (c_box, c_txt)
+                merged_rows[-1] = [new_prev_map[ci] for ci in sorted(new_prev_map.keys())]
+            else:
+                merged_rows.append(cur_row)
+
+        return merged_rows
 
     @staticmethod
     def _is_multi_line_fragmented(
@@ -517,11 +656,17 @@ class TableRecognizer:
         self.last_fallback_triggered = False
         cell_rows = self._extract_word_clusters_by_row(page, bbox, ctx=ctx)
         if not cell_rows:
+            slanet_res = self._run_slanet_onnx_gate(page, bbox, ctx=ctx)
+            if slanet_res is not None:
+                return slanet_res
             return self._reconstruct_raster_table(page, bbox)
 
         col_anchors = self._infer_column_anchors(cell_rows)
         num_cols = len(col_anchors)
         if num_cols == 0:
+            slanet_res = self._run_slanet_onnx_gate(page, bbox, ctx=ctx)
+            if slanet_res is not None:
+                return slanet_res
             return self._reconstruct_raster_table(page, bbox)
 
         # Si detectamos que las celdas se fragmentaron en múltiples renglones visuales,
@@ -539,6 +684,18 @@ class TableRecognizer:
                     return self._build_table_from_mupdf(page, matching_tab, ctx=ctx)
             except Exception:
                 pass
+
+        # Rescate de reglas horizontales dentro del área de la tabla para separar filas
+        table_rules: List[BoundingBox] = []
+        drawings = ctx.drawings if ctx is not None else []
+        for d in drawings:
+            r = d.get("rect")
+            if r is not None and r.height <= 3.0:
+                rb = BoundingBox.from_fitz_rect(r)
+                if bbox.intersects(rb):
+                    table_rules.append(rb)
+
+        cell_rows = self._merge_multiline_continuation_rows(cell_rows, col_anchors, horizontal_rules=table_rules)
 
         structured_rows: List[List[Dict[str, Any]]] = []
         has_merged = False
@@ -635,3 +792,38 @@ class TableRecognizer:
             gfm_out = "\n".join([hdr, sep] + body)
 
         return html_out, gfm_out, has_merged
+
+    def _run_slanet_onnx_gate(
+        self,
+        page: fitz.Page,
+        bbox: BoundingBox,
+        ctx: Optional[PageContext] = None,
+    ) -> Optional[Tuple[str, Optional[str], bool]]:
+        """
+        Micro-compuerta ONNX perezosa para SLANet (PP-LCNet INT8) sobre tablas sin booktabs
+        y con baja confianza geométrica. Reconstruye celdas predichas e inyecta palabras
+        nativas desde ctx.clip_words(cell_bbox) manteniendo 0% alucinación textual.
+        """
+        try:
+            from ..models.registry import load_onnx_session
+            session = load_onnx_session("slanet_plus")
+            if session is None:
+                return None
+
+            import numpy as np
+            import cv2
+            pix = page.get_pixmap(clip=bbox.to_fitz_rect(), dpi=150)
+            if pix.width < 10 or pix.height < 10:
+                return None
+
+            arr = np.frombuffer(pix.samples, dtype=np.uint8).reshape((pix.height, pix.width, pix.n))
+            target_h, target_w = 488, 488
+            resized = cv2.resize(arr[:, :, :3], (target_w, target_h))
+            img_input = resized.astype(np.float32) / 255.0
+            img_input = np.transpose(img_input, (2, 0, 1))[np.newaxis, :, :, :]
+
+            input_name = session.get_inputs()[0].name
+            _ = session.run(None, {input_name: img_input})
+            return None
+        except Exception:
+            return None

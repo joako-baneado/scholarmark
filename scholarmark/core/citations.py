@@ -36,6 +36,19 @@ _APA_PAREN_CITE_RE = re.compile(
 )
 
 
+_SUPERSCRIPT_CITE_RE = re.compile(
+    r"(?<=[a-zA-Z0-9\.,;:\)\]])\^\{(\d+(?:\s*[\-–—]\s*\d+)?(?:\s*,\s*\d+(?:\s*[\-–—]\s*\d+)?)*)\}"
+)
+_UNICODE_SUPERSCRIPTS = {
+    "⁰": "0", "¹": "1", "²": "2", "³": "3", "⁴": "4",
+    "⁵": "5", "⁶": "6", "⁷": "7", "⁸": "8", "⁹": "9",
+    "⁻": "-", "–": "-", "—": "-", ",": ","
+}
+_UNICODE_SUPER_RE = re.compile(
+    r"(?<=[a-zA-Z0-9\.,;:\)\]])([¹²³⁴⁵⁶⁷⁸⁹⁰]+(?:\s*[⁻–—]\s*[¹²³⁴⁵⁶⁷⁸⁹⁰]+)?(?:\s*,\s*[¹²³⁴⁵⁶⁷⁸⁹⁰]+(?:\s*[⁻–—]\s*[¹²³⁴⁵⁶⁷⁸⁹⁰]+)?)*)"
+)
+
+
 @dataclass
 class ReferenceEntry:
     """Entrada bibliográfica canónica extraída de la sección References."""
@@ -84,13 +97,15 @@ def expand_citation_markers(
 ) -> List[str]:
     """
     Extrae y expande todas las citas presentes en un fragmento de texto.
-    Soporta rangos IEEE ([1]-[3], [1–3], [1, 4-6]) y citas APA (Autor et al., 2024).
+    Soporta rangos IEEE ([1]-[3], [1–3], [1, 4-6]), citas APA (Autor et al., 2024),
+    y superíndices Vancouver/Nature (^{12-15}, ¹²⁻¹⁵) con validación O(1) contra bibliografía.
     """
     if not text:
         return []
 
     found_ids: List[str] = []
     seen: Set[str] = set()
+    valid_ref_ids: Set[str] = {r.ref_id for r in known_references} if known_references else set()
 
     def _add(cid: str):
         if cid not in seen:
@@ -134,6 +149,85 @@ def expand_citation_markers(
                     matched_ref = True
         if not matched_ref:
             _add(f"{surname}{yr}")
+
+    # 4. Superíndices LaTeX: ^{1,3-5} o ^{12}
+    for m in _SUPERSCRIPT_CITE_RE.finditer(work_text):
+        start_idx = m.start()
+        prefix = work_text[:start_idx].rstrip()
+        is_math_exponent = False
+        m_base = re.search(r"([a-zA-Z0-9\.,;:\)\]]+)$", prefix)
+        if m_base:
+            base_token = m_base.group(1)
+            if (
+                (len(base_token) <= 2 and base_token.isalpha())
+                or base_token == "10"
+                or bool(re.search(r"[=+\-*/]\s*[a-zA-Z0-9]+$", prefix))
+            ):
+                is_math_exponent = True
+
+        if not is_math_exponent:
+            inner = m.group(1)
+            parts = re.split(r"\s*,\s*", inner)
+            parsed_ids = []
+            for p in parts:
+                p = p.strip()
+                m_rng = re.fullmatch(r"(\d{1,3})\s*[-–—]\s*(\d{1,3})", p)
+                if m_rng:
+                    s_n, e_n = int(m_rng.group(1)), int(m_rng.group(2))
+                    if 1 <= s_n <= e_n <= (s_n + 50):
+                        parsed_ids.extend(str(n) for n in range(s_n, e_n + 1))
+                elif p.isdigit():
+                    parsed_ids.append(p)
+
+            if valid_ref_ids:
+                for pid in parsed_ids:
+                    if pid in valid_ref_ids:
+                        _add(pid)
+            else:
+                has_punct = prefix.endswith((".", ",", ";", ":", ")", "]"))
+                has_word = bool(re.search(r"[a-zA-Z]{2,}$", prefix))
+                if has_punct or has_word:
+                    for pid in parsed_ids:
+                        if 1 <= int(pid) <= 500:
+                            _add(pid)
+
+    # 5. Superíndices Unicode directos: ¹²⁻¹⁵
+    for m in _UNICODE_SUPER_RE.finditer(work_text):
+        start_idx = m.start()
+        prefix = work_text[:start_idx].rstrip()
+        is_math_exponent = False
+        m_base = re.search(r"([a-zA-Z0-9\.,;:\)\]]+)$", prefix)
+        if m_base:
+            base_token = m_base.group(1)
+            if (len(base_token) == 1 and base_token.isalpha()) or base_token == "10":
+                is_math_exponent = True
+
+        if not is_math_exponent:
+            raw_str = m.group(1)
+            ascii_str = "".join(_UNICODE_SUPERSCRIPTS.get(ch, ch) for ch in raw_str)
+            parts = re.split(r"\s*,\s*", ascii_str)
+            parsed_ids = []
+            for p in parts:
+                p = p.strip()
+                m_rng = re.fullmatch(r"(\d{1,3})\s*[-–—]\s*(\d{1,3})", p)
+                if m_rng:
+                    s_n, e_n = int(m_rng.group(1)), int(m_rng.group(2))
+                    if 1 <= s_n <= e_n <= (s_n + 50):
+                        parsed_ids.extend(str(n) for n in range(s_n, e_n + 1))
+                elif p.isdigit():
+                    parsed_ids.append(p)
+
+            if valid_ref_ids:
+                for pid in parsed_ids:
+                    if pid in valid_ref_ids:
+                        _add(pid)
+            else:
+                has_punct = prefix.endswith((".", ",", ";", ":", ")", "]"))
+                has_word = bool(re.search(r"[a-zA-Z]{2,}$", prefix))
+                if (has_punct or has_word) and parsed_ids:
+                    for pid in parsed_ids:
+                        if 1 <= int(pid) <= 500:
+                            _add(pid)
 
     return found_ids
 

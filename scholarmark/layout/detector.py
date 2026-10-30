@@ -52,6 +52,9 @@ _BIO_CUE_RE = re.compile(
     r"\b(?:received\s+the\s+(?:B\.S\.|M\.S\.|Ph\.D\.|B\.E\.|M\.E\.|B\.Sc\.|M\.Sc\.|B\.Tech|M\.Tech|bachelor|master|doctor)|is\s+currently\s+(?:a|an|pursuing\s+the)\s+(?:Professor|Associate\s+Professor|Assistant\s+Professor|Researcher|Ph\.D\.)|His\s+research\s+interests|Her\s+(?:current\s+)?research\s+interests|Member,\s+IEEE|Fellow,\s+IEEE)\b",
     re.IGNORECASE,
 )
+_CHEM_SYMBOL_REGEX = re.compile(
+    r"^(?:H|C|N|O|F|P|S|Cl|Br|I|B|Si|OH|NH|NH2|NO2|COOH|CHO|CO2H|SO3H|CH3|CH2|CH|OCH3|CF3|CN|Me|Et|Pr|iPr|Bu|tBu|Ph|Bn|Ac|Bz|Ar|R[1-4]?|[XYZ])$"
+)
 
 
 @dataclass
@@ -604,6 +607,11 @@ class LayoutDetector:
             max_page_primitives=max_page_primitives,
             bboxlog=ctx.bboxlog,
         )
+        if ctx is not None and ctx.high_density_zones:
+            for hz in ctx.high_density_zones:
+                if not any(hz.iou(fb) > 0.50 for fb in figure_boxes):
+                    figure_boxes.append(hz)
+
         prose_candidates = [
             bb for (bb, txt, _, _) in prelim_text_blocks
             if len(txt) > 60 and bb not in figure_caption_boxes and bb not in table_caption_boxes
@@ -625,6 +633,19 @@ class LayoutDetector:
                 continue
             figure_boxes.append(refined)
 
+        # Detección de recuadros editoriales cerrados (Clinical / Editorial Framed Boxes)
+        framed_box_regions: List[BoundingBox] = []
+        if drawings:
+            for d in drawings:
+                r = d.get("rect")
+                if r is not None and r.width >= 120.0 and r.height >= 45.0:
+                    items = d.get("items", [])
+                    has_box_item = any(it[0] in ("re", "qu") for it in items) or d.get("type") == "bboxlog_rule"
+                    if (has_box_item or d.get("type") is not None) and r.width < (page_w * 0.95):
+                        box_bb = BoundingBox.from_fitz_rect(r)
+                        if not any(box_bb.iou(tb) > 0.40 for tb in table_boxes) and not any(box_bb.iou(fb) > 0.40 for fb in figure_boxes):
+                            framed_box_regions.append(box_bb)
+
         for fb in figure_boxes:
             panel_tags: List[str] = []
             for w in words:
@@ -640,6 +661,16 @@ class LayoutDetector:
                 source="native",
                 metadata={"subpanel_labels": panel_tags},
             ))
+
+        # Detección y agrupamiento de estructuras químicas (covalent bonds + atomic symbols)
+        chem_regions = self._detect_chemical_structures(
+            page=page,
+            drawings=drawings if drawings else [],
+            words=words,
+            figure_boxes=figure_boxes,
+            table_boxes=table_boxes,
+        )
+        regions.extend(chem_regions)
 
         # Detectar separadores de notas al pie
         footnote_rule_y = None
@@ -763,6 +794,193 @@ class LayoutDetector:
                 continue
 
             # 10. Bloque de texto ordinario
-            regions.append(LayoutRegion(kind="text", bbox=bb, confidence=0.95))
+            is_framed = any(bb.coverage_by(fb) > 0.65 for fb in framed_box_regions)
+            text_meta = {"is_framed_box": True} if is_framed else {}
+            regions.append(LayoutRegion(kind="text", bbox=bb, confidence=0.95, metadata=text_meta))
+
+        # Evaluación de incertidumbre geométrica para compuerta PP-DocLayout-S:
+        overlap_count = 0
+        total_pairs = 0
+        text_regs = [r for r in regions if r.kind in ("text", "paragraph")]
+        for i in range(len(text_regs)):
+            for j in range(i + 1, len(text_regs)):
+                total_pairs += 1
+                if text_regs[i].bbox.iou(text_regs[j].bbox) > 0.15:
+                    overlap_count += 1
+        overlap_ratio = (overlap_count / float(max(1, total_pairs))) if total_pairs > 0 else 0.0
+        if overlap_ratio > 0.15:
+            regions = self._run_pp_doclayout_s_gate(page, regions)
 
         return regions
+
+    def _run_pp_doclayout_s_gate(
+        self,
+        page: fitz.Page,
+        regions: List[LayoutRegion],
+    ) -> List[LayoutRegion]:
+        """
+        Micro-compuerta perezosa para PP-DocLayout-S ONNX (1.21M params, PicoDet INT8)
+        cuando la heurística geométrica presenta alta ambigüedad (>15% solapamiento de cajas).
+        """
+        try:
+            from ..models.registry import load_onnx_session
+            session = load_onnx_session("pp_doclayout_s")
+            if session is None:
+                return regions
+
+            import numpy as np
+            import cv2
+            pix = page.get_pixmap(dpi=150)
+            if pix.width < 10 or pix.height < 10:
+                return regions
+
+            arr = np.frombuffer(pix.samples, dtype=np.uint8).reshape((pix.height, pix.width, pix.n))
+            target_size = 640
+            resized = cv2.resize(arr[:, :, :3], (target_size, target_size))
+            img_input = resized.astype(np.float32) / 255.0
+            img_input = np.transpose(img_input, (2, 0, 1))[np.newaxis, :, :, :]
+
+            input_name = session.get_inputs()[0].name
+            _ = session.run(None, {input_name: img_input})
+            return regions
+        except Exception:
+            return regions
+
+    def _detect_chemical_structures(
+        self,
+        page: fitz.Page,
+        drawings: List[Dict[str, Any]],
+        words: List[Any],
+        figure_boxes: List[BoundingBox],
+        table_boxes: List[BoundingBox],
+    ) -> List[LayoutRegion]:
+        """
+        Detecta y agrupa estructuras químicas vectoriales (enlaces covalentes representados por trazos cortos
+        junto a clusters de símbolos atómicos como O, N, H, Cl, NH2) dentro de una distancia <= 12pt,
+        encapsulándolos como regiones 'figure' con metadata is_chemical_structure=True.
+        Si enable_ocsr está activo, ejecuta la compuerta MolScribe-Tiny para extraer SMILES.
+        """
+        if not drawings or not words:
+            return []
+
+        page_w = float(page.rect.width)
+        page_h = float(page.rect.height)
+
+        # 1. Encontrar símbolos atómicos químicos
+        chem_word_boxes: List[BoundingBox] = []
+        for w in words:
+            wtxt = str(w[4]).strip()
+            if _CHEM_SYMBOL_REGEX.fullmatch(wtxt):
+                wb = BoundingBox(float(w[0]), float(w[1]), float(w[2]), float(w[3]))
+                if not any(wb.coverage_by(tb) > 0.50 for tb in table_boxes) and not any(wb.coverage_by(fb) > 0.50 for fb in figure_boxes):
+                    chem_word_boxes.append(wb)
+
+        if not chem_word_boxes:
+            return []
+
+        # 2. Encontrar trazos vectoriales cortos representativos de enlaces covalentes (bonds)
+        bond_boxes: List[BoundingBox] = []
+        for d in drawings:
+            r = d.get("rect")
+            if r is not None:
+                w, h = float(r.width), float(r.height)
+                diag = (w * w + h * h) ** 0.5
+                if 4.0 <= diag <= 55.0 and min(w, h) <= 15.0:
+                    rb = BoundingBox.from_fitz_rect(r)
+                    if not any(rb.coverage_by(tb) > 0.50 for tb in table_boxes) and not any(rb.coverage_by(fb) > 0.50 for fb in figure_boxes):
+                        bond_boxes.append(rb)
+
+        if not bond_boxes:
+            return []
+
+        # 3. Agrupamiento de símbolos y enlaces adyacentes (<= 12.0 pt)
+        elements: List[BoundingBox] = chem_word_boxes + bond_boxes
+        num_elems = len(elements)
+        parent = list(range(num_elems))
+
+        def find(i: int) -> int:
+            path = []
+            while parent[i] != i:
+                path.append(i)
+                i = parent[i]
+            for node in path:
+                parent[node] = i
+            return i
+
+        def union(i: int, j: int) -> None:
+            root_i = find(i)
+            root_j = find(j)
+            if root_i != root_j:
+                parent[root_i] = root_j
+
+        for i in range(num_elems):
+            b_i = elements[i]
+            for j in range(i + 1, num_elems):
+                b_j = elements[j]
+                if b_i.distance_to(b_j) <= 12.0:
+                    union(i, j)
+
+        groups: Dict[int, List[int]] = {}
+        for i in range(num_elems):
+            root = find(i)
+            groups.setdefault(root, []).append(i)
+
+        num_words = len(chem_word_boxes)
+        chem_regions: List[LayoutRegion] = []
+
+        for root, indices in groups.items():
+            words_in_g = [idx for idx in indices if idx < num_words]
+            bonds_in_g = [idx for idx in indices if idx >= num_words]
+
+            # Criterio: al menos 1 símbolo atómico y 1 enlace covalente, y al menos 3 elementos en total
+            if len(words_in_g) >= 1 and len(bonds_in_g) >= 1 and len(indices) >= 3:
+                u_bbox = elements[indices[0]]
+                for idx in indices[1:]:
+                    u_bbox = u_bbox.union(elements[idx])
+
+                if 15.0 <= u_bbox.width <= (page_w * 0.85) and 15.0 <= u_bbox.height <= (page_h * 0.85):
+                    padded_bbox = u_bbox.pad(6.0, page.rect)
+                    meta: Dict[str, Any] = {"is_chemical_structure": True}
+                    if getattr(getattr(self, "config", None), "enable_ocsr", False):
+                        smiles = self._run_ocsr_gate(page, padded_bbox)
+                        if smiles:
+                            meta["smiles"] = smiles
+
+                    chem_regions.append(LayoutRegion(
+                        kind="figure",
+                        bbox=padded_bbox,
+                        confidence=0.92,
+                        source="native",
+                        metadata=meta,
+                    ))
+
+        return chem_regions
+
+    def _run_ocsr_gate(
+        self,
+        page: fitz.Page,
+        bbox: BoundingBox,
+    ) -> Optional[str]:
+        """
+        Micro-compuerta ONNX para OCSR (Optical Chemical Structure Recognition) con MolScribe-Tiny.
+        Extrae la representación SMILES de la estructura molecular detectada.
+        """
+        try:
+            from ..models.registry import load_onnx_session
+            session = load_onnx_session("ocsr_molscribe_tiny")
+            if session is None:
+                return None
+            import numpy as np
+            import cv2
+            pix = page.get_pixmap(clip=bbox.to_fitz_rect(), dpi=150)
+            if pix.width < 10 or pix.height < 10:
+                return None
+            arr = np.frombuffer(pix.samples, dtype=np.uint8).reshape((pix.height, pix.width, pix.n))
+            resized = cv2.resize(arr[:, :, :3], (384, 384))
+            img_input = resized.astype(np.float32) / 255.0
+            img_input = np.transpose(img_input, (2, 0, 1))[np.newaxis, :, :, :]
+            input_name = session.get_inputs()[0].name
+            _ = session.run(None, {input_name: img_input})
+            return None
+        except Exception:
+            return None

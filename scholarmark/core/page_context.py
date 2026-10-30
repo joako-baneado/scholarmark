@@ -26,6 +26,8 @@ class PageContext:
     words: List[Tuple[float, float, float, float, str, int, int, int]]
     image_boxes: List[Tuple[int, BoundingBox]] = field(default_factory=list)
     column_zones: List[Tuple[float, float, float, float]] = field(default_factory=list)
+    high_density_zones: List[BoundingBox] = field(default_factory=list)
+    ocr_injected: bool = False
     full_text: str = ""
 
     @classmethod
@@ -132,12 +134,20 @@ class PageContext:
         except Exception:
             bboxlog = []
 
+        high_density_zones: List[BoundingBox] = []
         drawings: List[Dict[str, Any]] = []
         if len(bboxlog) <= max_primitives:
             try:
                 drawings = page.get_drawings()
             except Exception:
                 drawings = []
+        else:
+            high_density_zones, drawings = cls._partition_dense_bboxlog_16x16(
+                bboxlog=bboxlog,
+                page_w=width,
+                page_h=height,
+                cell_density_threshold=800,
+            )
 
         # 3. Única inspección de cajas de imágenes ráster incrustadas
         image_boxes: List[Tuple[int, BoundingBox]] = []
@@ -148,6 +158,69 @@ class PageContext:
                     image_boxes.append((xref, BoundingBox.from_fitz_rect(r)))
         except Exception:
             pass
+
+        # 4. Triaje para páginas escaneadas o fuentes Type 3 corruptas
+        ocr_injected = False
+        has_corrupted_type3 = False
+        for b in raw_dict.get("blocks", []):
+            if b.get("type") != 0:
+                continue
+            for ln in b.get("lines", []):
+                for sp in ln.get("spans", []):
+                    font_name = str(sp.get("font", "")).lower()
+                    sp_text = str(sp.get("text", ""))
+                    if "\ufffd" in sp_text or "type3" in font_name:
+                        has_corrupted_type3 = True
+                        break
+                if has_corrupted_type3:
+                    break
+            if has_corrupted_type3:
+                break
+
+        has_large_image = any(
+            (ib.width * ib.height) >= (width * height * 0.40)
+            for _, ib in image_boxes
+        )
+        needs_ocr_triage = has_corrupted_type3 or (len(words) < 15 and has_large_image)
+
+        if needs_ocr_triage:
+            try:
+                from ..recognizers.ocr_engine import LocalOCREngine
+                if LocalOCREngine.is_available():
+                    engine = LocalOCREngine()
+                    ocr_words = engine.extract_words_from_region(
+                        page=page,
+                        bbox=BoundingBox(0.0, 0.0, width, height),
+                        dpi=150,
+                    )
+                    if ocr_words:
+                        ocr_injected = True
+                        b_idx = len(raw_dict.get("blocks", []))
+                        synth_spans = []
+                        for box, txt, score in ocr_words:
+                            for tok in txt.split():
+                                w_idx = len(words)
+                                words.append((box.x0, box.y0, box.x1, box.y1, tok, b_idx, 0, w_idx))
+                                synth_spans.append({
+                                    "bbox": (box.x0, box.y0, box.x1, box.y1),
+                                    "text": tok,
+                                    "size": 10.0,
+                                    "font": "OCR-Synthesized",
+                                    "chars": [],
+                                })
+                        if synth_spans:
+                            raw_dict.setdefault("blocks", []).append({
+                                "type": 0,
+                                "bbox": (0.0, 0.0, width, height),
+                                "lines": [{
+                                    "bbox": (0.0, 0.0, width, height),
+                                    "spans": synth_spans,
+                                    "dir": (1.0, 0.0),
+                                }]
+                            })
+                            text_lines.append(" ".join(t for _, _, _, _, t, _, _, _ in words))
+            except Exception:
+                pass
 
         return cls(
             page=page,
@@ -160,8 +233,103 @@ class PageContext:
             drawings=drawings,
             words=words,
             image_boxes=image_boxes,
+            high_density_zones=high_density_zones,
+            ocr_injected=ocr_injected,
             full_text="\n".join(text_lines),
         )
+
+    @classmethod
+    def _partition_dense_bboxlog_16x16(
+        cls,
+        bboxlog: List[Tuple[str, Any]],
+        page_w: float,
+        page_h: float,
+        cell_density_threshold: int = 800,
+    ) -> Tuple[List[BoundingBox], List[Dict[str, Any]]]:
+        """
+        Particiona una página con saturación vectorial (>20,000 primitivas) mediante una
+        rejilla espacial uniforme de 16x16 celdas, aislando regiones de alta densidad
+        (HighDensityVectorZone) y rescatando reglas lineales fuera de dichas zonas.
+        """
+        GRID_SIZE = 16
+        cw = page_w / float(GRID_SIZE)
+        ch = page_h / float(GRID_SIZE)
+        if cw <= 0 or ch <= 0:
+            return [], []
+
+        grid_counts: Dict[Tuple[int, int], int] = {}
+        candidate_rules: List[fitz.Rect] = []
+
+        for item in bboxlog:
+            kind = item[0]
+            rect_tuple = item[1]
+            if rect_tuple is None:
+                continue
+            r = fitz.Rect(rect_tuple)
+            rx0, ry0, rx1, ry1 = float(r.x0), float(r.y0), float(r.x1), float(r.y1)
+            rw = rx1 - rx0
+            rh = ry1 - ry0
+
+            if kind not in ("fill-text", "stroke-text", "clip-path"):
+                rcx = (rx0 + rx1) * 0.5
+                rcy = (ry0 + ry1) * 0.5
+                gx = min(GRID_SIZE - 1, max(0, int(rcx / cw)))
+                gy = min(GRID_SIZE - 1, max(0, int(rcy / ch)))
+                grid_counts[(gx, gy)] = grid_counts.get((gx, gy), 0) + 1
+
+                if rh <= 3.0 and rw >= 6.0:
+                    candidate_rules.append(r)
+
+        dense_cells = {cell for cell, count in grid_counts.items() if count >= cell_density_threshold}
+        high_density_zones: List[BoundingBox] = []
+
+        if dense_cells:
+            visited = set()
+            for cell in dense_cells:
+                if cell in visited:
+                    continue
+                comp = []
+                queue = [cell]
+                visited.add(cell)
+                while queue:
+                    curr = queue.pop()
+                    comp.append(curr)
+                    cgx, cgy = curr
+                    for dx in (-1, 0, 1):
+                        for dy in (-1, 0, 1):
+                            if dx == 0 and dy == 0:
+                                continue
+                            nb = (cgx + dx, cgy + dy)
+                            if nb in dense_cells and nb not in visited:
+                                visited.add(nb)
+                                queue.append(nb)
+
+                min_gx = min(c[0] for c in comp)
+                max_gx = max(c[0] for c in comp)
+                min_gy = min(c[1] for c in comp)
+                max_gy = max(c[1] for c in comp)
+
+                zone_bbox = BoundingBox(
+                    min_gx * cw,
+                    min_gy * ch,
+                    min(page_w, (max_gx + 1) * cw),
+                    min(page_h, (max_gy + 1) * ch),
+                )
+                high_density_zones.append(zone_bbox)
+
+        drawings: List[Dict[str, Any]] = []
+        for r in candidate_rules:
+            rule_box = BoundingBox.from_fitz_rect(r)
+            in_zone = any(rule_box.intersects(zone) for zone in high_density_zones)
+            if not in_zone:
+                drawings.append({
+                    "rect": r,
+                    "type": "bboxlog_rule",
+                    "items": [("re", r)],
+                    "width": float(r.height),
+                })
+
+        return high_density_zones, drawings
 
     def clip_words(
         self,

@@ -18,6 +18,20 @@ MODEL_SPECS: Dict[str, Dict[str, Any]] = {
         "approx_size_mb": 42,
         "sha256": None,
     },
+    "pp_doclayout_s": {
+        "filename": "pp_doclayout_s_picodet_int8.onnx",
+        "task": "layout_detection",
+        "quantization": "INT8",
+        "approx_size_mb": 4,
+        "sha256": None,
+    },
+    "pp_doclayout_m": {
+        "filename": "pp_doclayout_m_picodet_int8.onnx",
+        "task": "layout_detection",
+        "quantization": "INT8",
+        "approx_size_mb": 18,
+        "sha256": None,
+    },
     "pp_formulanet_s": {
         "filename": "pp_formulanet_s_int8.onnx",
         "task": "formula_recognition",
@@ -25,11 +39,25 @@ MODEL_SPECS: Dict[str, Dict[str, Any]] = {
         "approx_size_mb": 78,
         "sha256": None,
     },
+    "unimernet_tiny": {
+        "filename": "unimernet_tiny_int8.onnx",
+        "task": "formula_recognition",
+        "quantization": "INT8",
+        "approx_size_mb": 35,
+        "sha256": None,
+    },
     "slanet_plus": {
         "filename": "slanet_plus_table_structure_int8.onnx",
         "task": "table_structure",
         "quantization": "INT8",
         "approx_size_mb": 26,
+        "sha256": None,
+    },
+    "ocsr_molscribe_tiny": {
+        "filename": "molscribe_tiny_int8.onnx",
+        "task": "chemical_ocsr",
+        "quantization": "INT8",
+        "approx_size_mb": 22,
         "sha256": None,
     },
 }
@@ -57,7 +85,8 @@ def load_onnx_session(
 ):
     """
     Carga una sesión de inferencia ONNX Runtime si el archivo de pesos existe en disco
-    o en el directorio de caché local (~/.cache/scholarmark/models).
+    o en el directorio de caché local (~/.cache/scholarmark/models), configurando
+    hilos acotados y caché acotada de formas dinámicas (OpenVINO CPU_RUNTIME_CACHE_CAPACITY="20").
     """
     try:
         import onnxruntime as ort
@@ -81,9 +110,26 @@ def load_onnx_session(
 
     providers, _ = resolve_ort_providers(device)
     try:
-        return ort.InferenceSession(str(candidate), providers=providers)
+        sess_options = ort.SessionOptions()
+        sess_options.intra_op_num_threads = 2
+        sess_options.inter_op_num_threads = 1
+        provider_options = []
+        for p in providers:
+            if p == "OpenVINOExecutionProvider":
+                provider_options.append({"CPU_RUNTIME_CACHE_CAPACITY": "20"})
+            else:
+                provider_options.append({})
+        return ort.InferenceSession(
+            str(candidate),
+            sess_options=sess_options,
+            providers=providers,
+            provider_options=provider_options,
+        )
     except Exception:
-        return None
+        try:
+            return ort.InferenceSession(str(candidate), providers=providers)
+        except Exception:
+            return None
 
 
 def get_models_cache_dir(custom_dir: Optional[str] = None) -> Path:

@@ -59,6 +59,7 @@ def _build_config_from_args(args, force_default: bool = False) -> ExtractorConfi
         chunk_max_chars=getattr(args, "chunk_max_chars", 1800),
         workers=getattr(args, "workers", 1),
         onnx_model_path=getattr(args, "onnx_model", None),
+        enable_ocsr=getattr(args, "enable_ocsr", False),
     )
 
 
@@ -265,6 +266,7 @@ def _add_common_extraction_flags(p: argparse.ArgumentParser) -> None:
     p.add_argument("--chunks", action="store_true", help="Export DocumentIR-aware semantic RAG chunks (*.chunks.jsonl)")
     p.add_argument("--chunk-max-chars", type=int, default=1800, help="Maximum characters per prose RAG chunk (default: 1800)")
     p.add_argument("--onnx-model", type=str, default=None, help="Path to custom layout/formula ONNX model")
+    p.add_argument("--enable-ocsr", action="store_true", help="Enable Optical Chemical Structure Recognition (OCSR) for molecular diagrams")
 
 
 def main():

@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "scholarmark"
-version = "4.1.0"
-description = "High-precision scientific PDF to Markdown, Canonical JSON & RAG Chunks extractor with single-pass PageContext, VisionEngine default, direct XREF figure dump, 2D LaTeX math, hierarchical HTML tables, 1:N caption matching, bidirectional citations, and in-memory RAG grounding manifest."
+version = "5.0.0"
+description = "High-precision scientific PDF to Markdown, Canonical JSON & RAG Chunks extractor with Uncertainty-Gated Micro-Hybrid Architecture (v5.0 universal coverage)."
 readme = "README.md"
 authors = [
     { name = "ScholarMark Team" }
@@ -36,6 +36,13 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+multilingual = [
+    "arabic-reshaper>=3.0.0",
+    "python-bidi>=0.6.0",
+]
+openvino = [
+    "openvino>=2024.0.0",
+]
 deep = [
     "onnxruntime>=1.17.0",
     "scipy>=1.11.0",

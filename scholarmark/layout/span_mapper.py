@@ -6,6 +6,7 @@ to guarantee 0.0% content hallucination and 100% native text retention.
 """
 
 import re
+import unicodedata
 from typing import List, Dict, Any, Optional
 import fitz
 
@@ -16,6 +17,77 @@ from ..ir.document import Block
 
 _INLINE_SCRIPT_RE = re.compile(r"^[A-Za-z0-9+\-(),]+$")
 _INLINE_BASE_RE = re.compile(r"^[A-Za-zΑ-Ωα-ω][A-Za-z0-9]{0,2}$")
+
+
+def _is_cjk_char(ch: str) -> bool:
+    if not ch:
+        return False
+    cp = ord(ch)
+    return (
+        0x4E00 <= cp <= 0x9FFF
+        or 0x3400 <= cp <= 0x4DBF
+        or 0x20000 <= cp <= 0x2A6DF
+        or 0xF900 <= cp <= 0xFAFF
+        or 0x3040 <= cp <= 0x309F  # Hiragana
+        or 0x30A0 <= cp <= 0x30FF  # Katakana
+        or 0xAC00 <= cp <= 0xD7AF  # Hangul
+    )
+
+
+def _is_rtl_char(ch: str) -> bool:
+    if not ch:
+        return False
+    cp = ord(ch)
+    return (
+        0x0590 <= cp <= 0x05FF  # Hebrew
+        or 0x0600 <= cp <= 0x06FF  # Arabic
+        or 0x0750 <= cp <= 0x077F  # Arabic Supplement
+        or 0x08A0 <= cp <= 0x08FF  # Arabic Extended-A
+        or 0xFB50 <= cp <= 0xFDFF  # Arabic Presentation Forms-A
+        or 0xFE70 <= cp <= 0xFEFF  # Arabic Presentation Forms-B
+    )
+
+
+def _reorder_bidi_text(text: str) -> str:
+    """
+    Aplica reordenamiento BiDi y conformación de glifos en textos con caracteres RTL (Árabe, Hebreo),
+    preservando prefijos de sintaxis Markdown (# , - , * , 1. ).
+    Utiliza arabic_reshaper y python-bidi si están disponibles; en su ausencia,
+    ejecuta un algoritmo de fallback determinista basado en inversión de tokens RTL contiguos.
+    """
+    if not text:
+        return text
+
+    has_rtl = any(_is_rtl_char(c) for c in text)
+    if not has_rtl:
+        return text
+
+    prefix = ""
+    content = text
+    m = re.match(r"^(#{1,6}\s+|[-*+]\s+|\d+\.\s+)", text)
+    if m:
+        prefix = m.group(1)
+        content = text[len(prefix):]
+
+    try:
+        import arabic_reshaper
+        from bidi.algorithm import get_display
+        reshaped = arabic_reshaper.reshape(content)
+        display_text = get_display(reshaped)
+        return prefix + display_text
+    except Exception:
+        pass
+
+    lines = content.split("\n")
+    reordered_lines = []
+    for line in lines:
+        tokens = line.split(" ")
+        rtl_count = sum(1 for c in line if _is_rtl_char(c))
+        if rtl_count > 0:
+            reordered_lines.append(" ".join(reversed(tokens)))
+        else:
+            reordered_lines.append(line)
+    return prefix + "\n".join(reordered_lines)
 
 
 def _reconstruct_line_text_with_kerning(spans: List[Dict[str, Any]]) -> str:
@@ -37,6 +109,7 @@ def _reconstruct_line_text_with_kerning(spans: List[Dict[str, Any]]) -> str:
         txt = s.get("text", "")
         if not txt:
             continue
+        txt = unicodedata.normalize("NFKC", txt)
         bbox = s.get("bbox")
         sz = float(s.get("size", 10.0))
         cy = ((float(bbox[1]) + float(bbox[3])) * 0.5) if bbox is not None else None
@@ -65,7 +138,13 @@ def _reconstruct_line_text_with_kerning(spans: List[Dict[str, Any]]) -> str:
 
         if prev_x1 is not None and bbox is not None:
             dx = float(bbox[0]) - prev_x1
-            if dx > (sz * 0.18) and (not parts or not parts[-1].endswith(" ")) and not txt.startswith(" "):
+            prev_char = parts[-1][-1] if (parts and parts[-1]) else ""
+            next_char = txt[0] if txt else ""
+            is_cjk_boundary = _is_cjk_char(prev_char) and _is_cjk_char(next_char)
+            is_rtl_boundary = _is_rtl_char(prev_char) and _is_rtl_char(next_char)
+            threshold = (sz * 0.40) if is_rtl_boundary else (sz * 0.18)
+
+            if not is_cjk_boundary and dx > threshold and (not parts or not parts[-1].endswith(" ")) and not txt.startswith(" "):
                 parts.append(" ")
         parts.append(txt)
         if bbox is not None:
@@ -136,7 +215,10 @@ def map_spans_to_blocks(
 
         if reg.kind in ("figure", "table"):
             for nl in native_lines:
-                if nl["bbox"].coverage_by(reg.bbox) >= 0.50:
+                if (
+                    nl["bbox"].coverage_by(reg.bbox) >= 0.50
+                    or (reg.metadata.get("is_chemical_structure") and nl["bbox"].intersects(reg.bbox))
+                ):
                     nl["consumed"] = True
             blocks.append(Block(
                 id=bid,
@@ -204,12 +286,13 @@ def map_spans_to_blocks(
                 assembled = _assemble_lines(group_lines)
                 sep = "\n" if reg.kind in ("algorithm", "list") else " "
                 suffix = f"_c{cid}" if cid >= 0 else "_cspan"
+                raw_text = sep.join(assembled).strip()
                 blocks.append(Block(
                     id=f"{bid}{suffix}",
                     kind=reg.kind,
                     bbox=group_bbox,
                     page=page_num,
-                    text=sep.join(assembled).strip(),
+                    text=_reorder_bidi_text(raw_text),
                     confidence=reg.confidence,
                     source="native",
                     heading_level=reg.heading_level,
@@ -233,7 +316,7 @@ def map_spans_to_blocks(
             kind=reg.kind,
             bbox=reg.bbox,
             page=page_num,
-            text=block_text,
+            text=_reorder_bidi_text(block_text),
             confidence=reg.confidence,
             source="native",
             heading_level=reg.heading_level,
@@ -248,7 +331,7 @@ def map_spans_to_blocks(
                 kind="text",
                 bbox=ol["bbox"],
                 page=page_num,
-                text=ol["text"],
+                text=_reorder_bidi_text(ol["text"]),
                 confidence=0.85,
                 source="native",
             ))
